@@ -137,6 +137,7 @@
       const members = issue.articleIds.map(id => next.articles.find(x => x.id === id));
       if (members.some(x => !x || !['approved', 'published'].includes(x.status) || x.issueId !== issue.id || !allPass(x))) fail('Chưa đủ kết quả đạt để phát hành số bản tin.');
       issue.published = true;
+      issue.publishedAt = stamp();
       members.filter(x => x.status !== 'published').forEach(x => { x.status = 'published'; x.issueId = issue.id; x.history.push({ at: stamp(), text: `Đăng trong số bản tin ${issue.number} (bản dùng thử).` }); });
       return next;
     }

@@ -39,6 +39,8 @@ test('nhiều phản biện, trả sửa, phân công lại và phát hành đú
  assert.equal(item(s,id).status,'published');
  assert.equal(item(s,'article2').status,'published');
  assert.equal(s.issues.find(x=>x.id==='issue2').published,true);
+ assert.ok(s.issues.find(x=>x.id==='issue2').publishedAt);
+ assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Ho_Chi_Minh',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(s.issues.find(x=>x.id==='issue2').publishedAt)),B.date());
 });
 
 test('phản biện không nhận danh tính, tệp gốc, ý kiến của phản biện khác',()=>{
