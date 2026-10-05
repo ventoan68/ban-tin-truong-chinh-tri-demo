@@ -1,251 +1,850 @@
 (() => {
-'use strict';
-const B = window.Bulletin;
-const KEY = 'tayninh-bantin-workflow-v2', ROLE_KEY = KEY + '-role', BACKUP_KEY = KEY + '-before-reset';
-const $ = selector => document.querySelector(selector);
-const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-const icons = {
- grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
- file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/>',
- check:'<path d="m8 12 3 3 8-9"/><path d="M20 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/>',
- book:'<path d="M12 5v16M3 3h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5v17h-5a4 4 0 0 0-4 1 4 4 0 0 0-4-1H3z"/>',
- chart:'<path d="M4 3v18h18M9 16v-5M14 16V6M19 16v-8"/>',
- people:'<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.9"/><circle cx="9" cy="7" r="4"/><path d="M16 3a4 4 0 0 1 0 8"/>',
- plus:'<path d="M12 5v14M5 12h14"/>',
- arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>',
- search:'<circle cx="10.5" cy="10.5" r="7.5"/><path d="m16 16 5 5"/>',
- clock:'<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
- download:'<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>',
- shield:'<path d="m12 3 9 4v5c0 5-9 10-9 10S3 17 3 12V7zM8 12l3 3 5-5"/>',
- repeat:'<path d="m17 2 4 4-4 4M3 11V8a2 2 0 0 1 2-2h16M7 22l-4-4 4-4m14-1v3a2 2 0 0 1-2 2H3"/>',
- send:'<path d="m22 2-7 20-4-9-9-4 20-7ZM11 13l11-11"/>',
- eye:'<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
- calendar:'<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/>'
-};
-const icon = name => `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name] || icons.file}</svg>`;
-const fmt = value => { const d = new Date(value?.length === 10 ? value + 'T12:00:00' : value); return isNaN(d) ? '—' : new Intl.DateTimeFormat('vi-VN',{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'Asia/Ho_Chi_Minh'}).format(d); };
-const shortDate = value => fmt(value).slice(0,5);
-const badge = (status, label) => `<span class="badge badge-${escape(status)}">${escape(label || B.statuses[status] || B.results[status] || status)}</span>`;
-const person = id => state.people.find(p => p.id === id);
-const button = (label, action, id='', style='btn', ico='') => `<button type="button" class="${style}" data-action="${escape(action)}"${id ? ` data-id="${escape(id)}"` : ''}>${ico ? icon(ico) : ''}${escape(label)}</button>`;
-const phaseEmpty = (title, text='') => `<div class="empty">${icon('file')}<strong>${escape(title)}</strong>${text ? `<p>${escape(text)}</p>` : ''}</div>`;
-let storageWarning = '', state;
-try { const stored = JSON.parse(localStorage.getItem(KEY) || 'null'); state = stored?.schema === 2 && Array.isArray(stored.articles) && Array.isArray(stored.people) && Array.isArray(stored.issues) ? stored : B.seed(); }
-catch { state = B.seed(); storageWarning = 'Không đọc được dữ liệu đã lưu. Đang hiển thị bộ hồ sơ mẫu.'; }
-let actorKey = 'secretary';
-try { const saved = localStorage.getItem(ROLE_KEY); if (saved) { B.actorInfo(state,saved); actorKey=saved; } } catch {}
-let actor = B.actorInfo(state,actorKey), page = 'overview', filter = '', search = '', toastTimer, lastFocused, fileDatabase;
-const pageLabels = { overview:'Tổng quan', articles:'Bài viết', reviews:'Phản biện', issues:'Số bản tin', reports:'Báo cáo', roles:'Vai trò & quy trình' };
-const allowedPages = () => actor.role === 'leader' ? ['overview','reports','roles'] : actor.role === 'reviewer' ? ['overview','articles','reviews','roles'] : actor.role === 'author' ? ['overview','articles','reports','roles'] : Object.keys(pageLabels);
-function toast(message) { clearTimeout(toastTimer); $('#toast').textContent=message; $('#toast').classList.add('show'); toastTimer=setTimeout(()=>$('#toast').classList.remove('show'),4200); }
-function commit(next) { try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { throw new Error('Trình duyệt chưa cho phép lưu hoặc đã hết dung lượng. Kết quả chưa được lưu.'); } state=next; }
-function transition(type,payload,message) { commit(B.apply(state,actor,type,payload)); closeModal(); render(); toast(message); }
-function roleOptions() {
- $('#role').innerHTML = `<optgroup label="Biên tập"><option value="secretary">Thư ký biên tập</option></optgroup><optgroup label="Người nộp bài">${state.people.filter(p=>p.role==='author').map(p=>`<option value="${escape(p.id)}">Người nộp · ${escape(p.name)}</option>`).join('')}</optgroup><optgroup label="Người phản biện">${state.people.filter(p=>p.role==='reviewer').map(p=>`<option value="${escape(p.id)}">${escape(p.name)}</option>`).join('')}</optgroup><optgroup label="Xem số liệu"><option value="chief">Trưởng Ban biên tập</option><option value="deputy">Phó Ban biên tập</option></optgroup>`;
- $('#role').value=actorKey;
-}
-function scoped() { return actor.role==='leader' ? state.articles : B.visibleArticles(state,actor); }
-function projected() { return B.visibleArticles(state,actor).map(a=>B.projectArticle(a,actor)); }
-function pendingReviews() { return scoped().flatMap(a=>['reviewing','results'].includes(a.status) ? B.activeReviews(a).filter(r=>!r.result && (actor.role!=='reviewer'||r.reviewerId===actor.id)).map(r=>({a,r})) : []); }
-function overdue() { return pendingReviews().filter(x=>x.r.due<B.date()); }
-function header(kicker,title,description,action='') { return `<div class="page-header"><div><span class="eyebrow">${escape(kicker)}</span><h1>${escape(title)}</h1><p>${escape(description)}</p></div>${action}</div>`; }
-function stat(label,value,note,ico,good=false) { return `<div class="stat"><span class="stat-icon">${icon(ico)}</span><span class="stat-label">${escape(label)}</span><strong class="stat-number">${escape(value)}</strong><span class="stat-note ${good?'good':''}">${escape(note)}</span></div>`; }
-function statsBlock() {
- const list=scoped(), count=s=>list.filter(a=>a.status===s).length;
- if (actor.role==='reviewer') { const assigned=list.flatMap(a=>a.reviews.filter(r=>r.reviewerId===actor.id)); return `<div class="stats">${stat('Hồ sơ được giao',list.length,'Chỉ các bài thuộc phân công','file')}${stat('Chờ đánh giá',pendingReviews().length,'Phiên bản được giao hiện tại','clock')}${stat('Đã gửi kết quả',assigned.filter(r=>r.result).length,'Các lượt đánh giá đã hoàn tất','check',true)}${stat('Quá hạn',overdue().length,'Theo hạn của từng lượt giao','calendar')}</div>`; }
- return `<div class="stats">${stat(actor.role==='author'?'Bài đã nộp':'Tổng bài tiếp nhận',list.length,actor.role==='author'?'Hồ sơ của người nộp hiện tại':'Bộ hồ sơ đang theo dõi','file')}${stat('Đang phản biện',count('reviewing')+count('results'),'Theo dõi từng lượt đánh giá','people')}${stat('Cần chỉnh sửa',count('revision'),'Chờ tiếp nhận phiên bản mới','repeat')}${stat('Đạt / đã đăng',count('approved')+count('published'),`${count('approved')} bài đạt · ${count('published')} bài đã đăng`,'check',true)}</div>`;
-}
-function articleTable(list,compact=false) {
- if (!list.length) return phaseEmpty('Chưa có hồ sơ phù hợp','Thay đổi điều kiện tìm kiếm hoặc chuyển vai trò để xem bộ hồ sơ tương ứng.');
- const secretary=actor.role==='secretary', reviewer=actor.role==='reviewer';
- return `<div class="table-wrap"><table><thead><tr><th>Bài viết / hồ sơ</th>${secretary&&!compact?'<th class="optional-col">Người nộp</th>':''}<th>Trạng thái</th>${!compact?`<th class="optional-col">${reviewer?'Hạn phản biện':'Tiến độ'}</th>`:''}<th></th></tr></thead><tbody>${list.map(a=>{
-  const rr=a.reviews.filter(r=>r.version===a.version), own=rr.find(r=>r.reviewerId===actor.id), done=rr.filter(r=>r.result).length;
-  let progress=reviewer ? own?`${fmt(own.due)}${own.result?`<span class="subline">${B.results[own.result]}</span>`:''}`:'Lượt trước đã kết thúc' : secretary&&rr.length ? `${done}/${rr.length} kết quả<div class="progress-mini"><i style="width:${Math.round(done/rr.length*100)}%"></i></div>`:`<span class="muted">Phiên bản ${String(a.version).padStart(2,'0')}</span>`;
-  return `<tr><td><button class="article-link" data-action="detail" data-id="${escape(a.id)}">${escape(a.title)}</button><span class="subline">${escape(a.code)} <span aria-hidden="true">·</span> ${escape(a.category)}</span></td>${secretary&&!compact?`<td class="optional-col"><div class="person-row"><span class="avatar">${escape(a.authorName.slice(-2))}</span><span>${escape(a.authorName)}<small class="subline">${escape(a.agency)}</small></span></div></td>`:''}<td>${badge(a.status)}</td>${!compact?`<td class="optional-col">${progress}</td>`:''}<td><button class="icon-btn" data-action="detail" data-id="${escape(a.id)}" aria-label="Xem hồ sơ ${escape(a.code)}">${icon('arrow')}</button></td></tr>`;
- }).join('')}</tbody></table></div>`;
-}
-function attentionPanel() {
- let entries=[];
- if(actor.role==='secretary') {
-  const sub=state.articles.filter(a=>a.status==='submitted'), results=state.articles.filter(a=>a.status==='results');
-  if(overdue().length) entries.push({ico:'clock',title:`${overdue().length} lượt phản biện quá hạn`,sub:'Kiểm tra tiến độ người được phân công',action:'nav-reviews'});
-  if(sub.length) entries.push({ico:'file',title:`${sub.length} bài chờ sơ duyệt`,sub:'Kiểm tra nội dung và tệp bản thảo',action:'nav-articles'});
-  if(results.length) entries.push({ico:'check',title:`${results.length} bài chờ tổng hợp`,sub:'Đã đủ kết quả từ người phản biện',action:'nav-articles'});
-  if(!entries.length) entries.push({ico:'check',title:'Các hồ sơ đã được xử lý',sub:'Tiếp tục theo dõi tiến độ và số bản tin',action:'nav-issues'});
- } else if(actor.role==='author') {
-  entries=scoped().filter(a=>a.status==='revision').map(a=>({ico:'repeat',title:'Yêu cầu bổ sung bản sửa',sub:a.code,action:'detail',id:a.id}));
-  if(!entries.length) entries.push({ico:'file',title:'Theo dõi bản thảo đã nộp',sub:'Trạng thái cập nhật theo từng bước xử lý',action:'nav-articles'});
- } else if(actor.role==='reviewer') {
-  entries=pendingReviews().slice(0,3).map(({a,r})=>({ico:'clock',title:a.code,sub:`Hạn xử lý ${fmt(r.due)}${r.due<B.date()?' · Quá hạn':''}`,action:'detail',id:a.id}));
-  if(!entries.length) entries.push({ico:'check',title:'Đã hoàn tất các lượt được giao',sub:'Theo dõi kết quả đã gửi trong hồ sơ',action:'nav-reviews'});
- }
- return `<section class="panel"><div class="panel-head"><div><h2>Việc cần theo dõi</h2><p>Ưu tiên trong vai trò hiện tại</p></div>${icon('clock')}</div><div class="panel-body">${entries.map((x,i)=>`<div class="attention-item"><span class="attention-icon ${i?'blue':''}">${icon(x.ico)}</span><div><strong>${escape(x.title)}</strong><small>${escape(x.sub)}</small>${button('Mở danh sách →',x.action,x.id||'','text-btn')}</div></div>`).join('')}</div></section>`;
-}
-function processStrip() { return `<div class="process-strip">${[['01','Nộp bài','Người nộp bản thảo'],['02','Sơ duyệt','Thư ký kiểm tra'],['03','Phản biện','Một hoặc nhiều người'],['04','Tổng hợp','Đạt hoặc trả bản sửa'],['05','Đăng bản tin','Sau khi đạt yêu cầu']].map(x=>`<div class="process-step"><span>${x[0]}</span><strong>${x[1]}</strong><small>${x[2]}</small></div>`).join('')}</div>`; }
-function distribution(list=scoped()) {
- const colors={submitted:'#d5b37b',ready:'#a4b5c6',reviewing:'#759db2',results:'#a49abb',revision:'#d39a83',approved:'#84ac96',published:'#577d8c'};
- return Object.entries(B.statuses).map(([s,label])=>{const n=list.filter(a=>a.status===s).length;return `<div class="chart-row"><div class="chart-title"><span>${escape(label)}</span><strong>${n} bài</strong></div><div class="chart-bar"><i style="width:${list.length?n/list.length*100:0}%;background:${colors[s]}"></i></div></div>`;}).join('');
-}
-function leaderOverview() {
- const pending=pendingReviews(), a=state.articles;
- return `${header('BAN BIÊN TẬP','Toàn cảnh bản tin','Số liệu tổng hợp và tiến độ xử lý. Chế độ chỉ xem, không có thao tác nghiệp vụ.',button('Xem báo cáo','nav-reports','','btn','chart'))}<div class="hero"><div><span class="eyebrow">${escape(actor.name)}</span><h2>Nắm tiến độ.<br>Theo dõi chất lượng biên tập.</h2><p>Tiếp nhận, phản biện và phát hành trong cùng một bảng số liệu.</p></div><div class="hero-stamp"><strong>${String(a.length).padStart(2,'0')}</strong>HỒ SƠ<span>ĐANG THEO DÕI</span></div></div>${statsBlock()}<div class="layout-two"><section class="panel"><div class="panel-head"><div><h2>Phân bố trạng thái</h2><p>Số liệu từ bộ hồ sơ dùng thử</p></div>${icon('chart')}</div><div class="panel-body">${distribution()}</div></section><section class="panel"><div class="panel-head"><h2>Chỉ số điều hành</h2>${badge('published','Chỉ xem')}</div><div class="panel-body"><div class="metric"><span>Lượt phản biện đang xử lý</span><strong>${pending.length}</strong></div><div class="metric"><span>Lượt quá hạn</span><strong>${overdue().length}</strong></div><div class="metric"><span>Bài chờ tổng hợp</span><strong>${a.filter(a=>a.status==='results').length}</strong></div><div class="metric"><span>Số bản tin đã phát hành</span><strong>${state.issues.filter(x=>x.published).length}</strong></div><div class="note" style="margin-top:22px">Trưởng/Phó Ban biên tập xem số liệu, thống kê; không tham gia nộp bài, sơ duyệt hoặc phản biện.</div></div></section></div>${processStrip()}`;
-}
-function overview() {
- if(actor.role==='leader') return leaderOverview();
- const roles={secretary:['BÀN LÀM VIỆC BIÊN TẬP','Tổng quan bản tin','Theo dõi tiến độ bài viết, kết quả phản biện và kế hoạch phát hành.'],author:['KHÔNG GIAN NGƯỜI NỘP BÀI','Bản thảo & tiến độ','Nộp bài, nhận ý kiến tổng hợp và bổ sung các phiên bản chỉnh sửa.'],reviewer:['KHÔNG GIAN PHẢN BIỆN','Hồ sơ được phân công','Đánh giá độc lập trên bản thảo ẩn danh. Chỉ xem hồ sơ được giao.']};
- const r=roles[actor.role], list=projected().slice().sort((a,b)=>b.created.localeCompare(a.created)).slice(0,5);
- const primary=actor.role==='author'?button('Nộp bài mới','submit','','btn btn-primary','plus'):button('Xem quy trình','guide','','btn','arrow');
- return `${header(...r,primary)}<div class="hero"><div><span class="eyebrow">TIẾP NHẬN · PHẢN BIỆN · BIÊN TẬP</span><h2>Trọn quy trình.<br>Rõ từng bước xử lý.</h2><p>${actor.role==='reviewer'?'Danh tính tác giả được tách khỏi nội dung và tệp dùng để phản biện.':actor.role==='author'?'Mỗi phiên bản được lưu trong hồ sơ, cùng tiến độ xử lý và yêu cầu bổ sung.':'Một bài có thể giao nhiều người phản biện. Ý kiến chưa đạt được tổng hợp để tiếp nhận bản sửa.'}</p></div><div class="hero-stamp"><strong>${String(scoped().length).padStart(2,'0')}</strong>HỒ SƠ<span>TRONG VAI TRÒ HIỆN TẠI</span></div></div>${statsBlock()}<div class="layout-two"><section class="panel"><div class="panel-head"><div><h2>${actor.role==='reviewer'?'Bài viết được giao':'Hồ sơ đang theo dõi'}</h2><p>Trạng thái xử lý và phiên bản hiện tại</p></div>${button('Xem tất cả →','nav-articles','','text-btn')}</div>${articleTable(list,true)}<div class="table-foot">${actor.role==='reviewer'?'Đánh giá độc lập · Không hiển thị tên tác giả và nhận xét của người phản biện khác':'Lịch sử xử lý được ghi nhận trong từng hồ sơ'}</div></section>${attentionPanel()}</div>${processStrip()}`;
-}
-function articles() {
- const title=actor.role==='reviewer'?'Bài viết được giao':actor.role==='author'?'Bài viết của người nộp':'Quản lý bài viết';
- return `${header('HỒ SƠ & PHIÊN BẢN',title,actor.role==='reviewer'?'Chỉ bản thảo ẩn danh thuộc phân công hiện tại hoặc lịch sử được giao.':'Theo dõi từ sơ duyệt, phản biện đến chỉnh sửa và đăng bản tin.',actor.role==='author'?button('Nộp bài mới','submit','','btn btn-primary','plus'):'')}<section class="panel"><div class="filters"><div class="search">${icon('search')}<input id="article-search" aria-label="Tìm bài viết" placeholder="Tìm tên bài hoặc mã hồ sơ…" value="${escape(search)}"></div><select id="article-filter" aria-label="Lọc trạng thái"><option value="">Tất cả trạng thái</option>${Object.entries(B.statuses).map(([s,label])=>`<option value="${s}"${s===filter?' selected':''}>${escape(label)}</option>`).join('')}</select><span class="filter-total">${projected().length} hồ sơ</span></div><div id="articles-table">${articleList()}</div></section>${actor.role==='reviewer'?`<div class="split-note">${icon('shield')}<p>Chỉ hiển thị nội dung và tệp ẩn danh. Tên người nộp, đơn vị công tác và tệp bản thảo gốc không xuất hiện trong màn hình phản biện.</p></div>`:''}`;
-}
-function articleList() { const all=projected(), term=search.trim().toLocaleLowerCase('vi'), list=all.filter(a=>(!filter||a.status===filter)&&(!term||`${a.title} ${a.code}`.toLocaleLowerCase('vi').includes(term))); return articleTable(list)+`<div class="table-foot">Hiển thị ${list.length} / ${all.length} hồ sơ trong vai trò hiện tại</div>`; }
-function reviews() {
- const rows=scoped().flatMap(a=>a.reviews.filter(r=>r.version===a.version&&(actor.role!=='reviewer'||r.reviewerId===actor.id)).map(r=>({a:B.projectArticle(a,actor),r})));
- return `${header('ĐÁNH GIÁ ĐỘC LẬP','Theo dõi phản biện','Một hồ sơ, nhiều lượt đánh giá. Mỗi người phản biện có kết quả và thời hạn riêng.',actor.role==='secretary'?button('Thêm người phản biện','reviewer-add','','btn','plus'):'')}${actor.role==='reviewer'?statsBlock():`<div class="stats">${stat('Tổng lượt giao',rows.length,'Phiên bản hiện tại của hồ sơ','people')}${stat('Đang xử lý',pendingReviews().length,'Các lượt chưa gửi kết quả','clock')}${stat('Đã có kết quả',rows.filter(x=>x.r.result).length,'Thư ký tổng hợp độc lập','check',true)}${stat('Quá hạn',overdue().length,'Hạn xử lý chưa hoàn tất','calendar')}</div>`}<section class="panel"><div class="panel-head"><div><h2>${actor.role==='reviewer'?'Lượt phản biện của vai trò hiện tại':'Danh sách phân công'}</h2><p>${actor.role==='reviewer'?'Kết quả độc lập, gửi về thư ký biên tập':'Theo dõi kết quả của từng người được giao'}</p></div>${badge('reviewing','Bản thảo ẩn danh')}</div>${rows.length?`<div class="table-wrap"><table><thead><tr><th>Bài viết</th>${actor.role==='secretary'?'<th>Người phản biện</th>':''}<th>Hạn xử lý</th><th>Kết quả</th><th></th></tr></thead><tbody>${rows.map(({a,r})=>`<tr><td><button class="article-link" data-action="detail" data-id="${escape(a.id)}">${escape(a.title)}</button><span class="subline">${escape(a.code)} · Phiên bản ${r.version}</span></td>${actor.role==='secretary'?`<td><strong>${escape(person(r.reviewerId)?.name)}</strong><small class="subline">${escape(person(r.reviewerId)?.specialty)}</small></td>`:''}<td class="nowrap">${fmt(r.due)}</td><td>${r.result?badge(r.result):['reviewing','results'].includes(a.status)?badge(r.due<B.date()?'revise':'reviewing',r.due<B.date()?'Quá hạn':'Đang thực hiện'):badge('ready','Lượt đã kết thúc')}</td><td>${button(actor.role==='reviewer'&&!r.result&&a.status==='reviewing'?'Đánh giá':'Xem hồ sơ',actor.role==='reviewer'&&!r.result&&a.status==='reviewing'?'review':'detail',a.id,'btn btn-small')}</td></tr>`).join('')}</tbody></table></div>`:phaseEmpty('Chưa có lượt phân công')}</section><div class="note">Kết quả <strong>Cần chỉnh sửa</strong> hoặc <strong>Không đạt</strong> được chuyển về thư ký để tổng hợp. Người nộp nhận ý kiến tổng hợp, không nhận danh tính người phản biện.</div>`;
-}
-function issues() {
- return `${header('BIÊN TẬP & PHÁT HÀNH','Số bản tin','Xếp bài đạt phản biện vào số, sắp thứ tự và ghi nhận phát hành trong bản dùng thử.',button('Tạo số bản tin','issue-edit','','btn btn-primary','plus'))}<div class="issues">${state.issues.slice().reverse().map(x=>`<article class="panel issue-card"><div class="issue-cover"><div><span class="eyebrow">TRƯỜNG CHÍNH TRỊ TỈNH TÂY NINH</span><h3>${escape(x.title)}</h3></div><strong>${escape(x.number)}</strong></div><div class="issue-meta">${badge(x.published?'published':'ready',x.published?'Đã phát hành':'Đang biên tập')}<span>${x.articleIds.length} bài · ${fmt(x.published ? (x.publishedAt || x.date) : x.date)}</span></div><ol class="issue-list">${x.articleIds.map((id,i)=>{const a=state.articles.find(a=>a.id===id);return a?`<li><span>${String(i+1).padStart(2,'0')}</span><button class="article-link" data-action="detail" data-id="${escape(a.id)}">${escape(a.title)}</button></li>`:'';}).join('')||'<li><span>Chưa có bài trong mục lục.</span></li>'}</ol><div class="issue-actions">${button(x.published?'Xem mục lục':'Biên tập mục lục','issue-edit',x.id,'btn btn-small',x.published?'book':'file')}${!x.published?button('Phát hành số','issue-publish',x.id,'btn btn-small btn-navy','send'):''}</div></article>`).join('')}</div>`;
-}
-function reports() {
- const list=scoped(), total=list.length, authors=actor.role==='author';
- const categories=['Đào tạo, bồi dưỡng','Nghiên cứu, trao đổi','Thực tiễn cơ sở'];
- return `${header('SỐ LIỆU & THỐNG KÊ',authors?'Tiến độ bài đã nộp':'Báo cáo tổng hợp',authors?'Thống kê các hồ sơ thuộc người nộp hiện tại.':'Tổng hợp tình trạng tiếp nhận, phản biện và số bản tin.',button('Tải báo cáo CSV','csv','','btn','download'))}${statsBlock()}<div class="layout-two"><section class="panel"><div class="panel-head"><div><h2>Trạng thái bài viết</h2><p>Thống kê theo bộ hồ sơ hiện tại</p></div><span class="muted" style="font-size:10px">${total} hồ sơ</span></div><div class="panel-body">${distribution(list)}</div></section><section class="panel"><div class="panel-head"><h2>${authors?'Tỷ lệ hoàn thành':'Chuyên mục & tiến độ'}</h2>${icon('chart')}</div><div class="panel-body">${categories.map(c=>`<div class="metric"><span>${c}</span><strong>${list.filter(a=>a.category===c).length}</strong></div>`).join('')}<div class="metric"><span>Bài đạt hoặc đã đăng</span><strong>${total?Math.round(list.filter(a=>['approved','published'].includes(a.status)).length/total*100):0}%</strong></div>${!authors?`<div class="metric"><span>Lượt phản biện quá hạn</span><strong>${overdue().length}</strong></div><div class="metric"><span>Số bản tin đã phát hành</span><strong>${state.issues.filter(x=>x.published).length}</strong></div>`:''}<div class="note" style="margin-top:21px">${actor.role==='leader'?'Chế độ chỉ xem số liệu. Không hiển thị tệp bản thảo, ý kiến đánh giá hoặc thao tác xử lý hồ sơ.':'Số liệu cập nhật sau mỗi thao tác được lưu trên trình duyệt này.'}</div></div></section></div>`;
-}
-function flow() { return `<div class="flow-board"><div class="flow-node"><span class="eyebrow">01 · TIẾP NHẬN</span><h3>Nộp bài & sơ duyệt</h3><p>Người nộp gửi bản thảo. Thư ký kiểm tra; bài chưa đạt được trả lại kèm ý kiến.</p></div><div class="flow-node"><span class="eyebrow">02 · ĐÁNH GIÁ ĐỘC LẬP</span><h3>Giao nhiều người phản biện</h3><p>Thư ký chuẩn bị bản ẩn danh, chọn người phản biện và hạn xử lý riêng.</p><div class="review-lanes"><span>Phản biện 01</span><span>Phản biện 02</span><span>Phản biện …</span></div></div><div class="flow-node"><span class="eyebrow">03 · HOÀN TẤT</span><h3>Tất cả đạt → đăng</h3><p>Thư ký xác nhận đủ kết quả đạt của phiên bản hiện tại, xếp vào số và đăng bản dùng thử.</p></div></div><div class="loop-band"><strong>Chưa đạt → tiếp nhận bản sửa</strong><br>Kết quả và ý kiến → thư ký tổng hợp → người nộp chỉnh sửa → sơ duyệt lại → phân công lại. Kết quả cũ được giữ trong lịch sử, không dùng để duyệt phiên bản mới.</div>`; }
-function permissionTable() { return `<div class="table-wrap"><table class="role-table"><thead><tr><th>Vai trò</th><th>Được xem</th><th>Được thao tác</th></tr></thead><tbody><tr><td><strong>Người nộp bài</strong></td><td>Hồ sơ của mình, tiến độ và ý kiến tổng hợp</td><td class="allowed">Nộp bài; bổ sung bản sửa khi có yêu cầu</td></tr><tr><td><strong>Thư ký</strong></td><td>Danh tính tác giả, bản gốc, kết quả của các phản biện</td><td class="allowed">Sơ duyệt; chuẩn bị bản ẩn danh; phân công; tổng hợp; biên tập và đăng</td></tr><tr><td><strong>Phản biện 01, 02, …</strong></td><td>Bản ẩn danh được giao và nhận xét của mình</td><td class="allowed">Đánh giá độc lập, gửi kết quả về thư ký</td></tr><tr><td><strong>Trưởng/Phó Ban biên tập</strong></td><td>Số liệu, tiến độ và thống kê tổng hợp</td><td class="readonly">Chỉ xem; không xử lý nghiệp vụ</td></tr></tbody></table></div>`; }
-function roles() {
- return `${header('TỔ CHỨC QUY TRÌNH','Vai trò & cách xử lý','Mỗi vai trò có phạm vi hồ sơ và công việc riêng.') }<section class="panel"><div class="panel-head"><div><h2>Quy trình biên tập bài viết</h2><p>Nhiều phản biện độc lập, một đầu mối tổng hợp</p></div>${icon('repeat')}</div><div class="panel-body">${flow()}</div></section><section class="panel"><div class="panel-head"><h2>Phạm vi theo vai trò</h2>${badge('ready','Chọn ở góc trên')}</div>${permissionTable()}<div class="panel-body" style="padding-top:18px"><div class="note">Bản dùng thử cho phép chuyển vai trò để xem toàn bộ quy trình. Dữ liệu và tệp chỉ lưu trên trình duyệt đang sử dụng; không đồng bộ giữa các thiết bị. Việc ẩn danh nội dung và tệp cần được thư ký kiểm tra trước khi giao phản biện.</div></div></section>${actor.role==='secretary'?`<section class="panel"><div class="panel-head"><div><h2>Quản lý bản dùng thử</h2><p>Khôi phục bộ hồ sơ minh họa khi cần thử lại từ đầu</p></div></div><div class="setting-actions">${button('Khôi phục dữ liệu mẫu','reset','','btn','repeat')}${button('Hoàn tác lần khôi phục','undo-reset','','btn')}${button('Xuất dữ liệu hồ sơ','backup','','btn','download')}</div><div class="panel-body"><small class="muted">Tệp xuất chứa thông tin hồ sơ, phiên bản và kết quả; không chứa tệp đính kèm.</small></div></section>`:''}`;
-}
-function render() {
- if(!allowedPages().includes(page))page='overview';
- roleOptions();
- const labels={...pageLabels,articles:actor.role==='reviewer'?'Bài được giao':actor.role==='author'?'Bài đã nộp':'Bài viết'};
- const navIcons={overview:'grid',articles:'file',reviews:'check',issues:'book',reports:'chart',roles:'people'};
- $('#navigation').innerHTML=allowedPages().map(p=>`<button class="nav-item ${page===p?'active':''}" data-page="${p}"${page===p?' aria-current="page"':''}>${icon(navIcons[p])}<span>${labels[p]}</span>${p==='articles'?`<span class="nav-count">${projected().length}</span>`:''}</button>`).join('');
- $('#breadcrumb').textContent=labels[page];
- $('#content').innerHTML=(storageWarning?`<div class="note warm notice-storage">${escape(storageWarning)}</div>`:'')+({overview,articles,reviews,issues,reports,roles}[page]());
-}
-function navigate(p) { if(!allowedPages().includes(p))return; closeModal(); page=p;render(); window.scrollTo({top:0,behavior:'instant'}); }
-function modal(title,body,kicker='KHÔNG GIAN BIÊN TẬP') {
- lastFocused=document.activeElement;
- $('#dialog-title').textContent=title;$('#dialog-kicker').textContent=kicker;$('#dialog-content').innerHTML=body;
- if(!$('#dialog').open)$('#dialog').showModal();
-}
-function closeModal() { if($('#dialog').open){$('#dialog').close();if(lastFocused?.isConnected)lastFocused.focus();} }
-const form = (type,id,body,submitLabel='Lưu kết quả',extra='') => `<form data-form="${type}" data-id="${escape(id||'')}" ${extra}><div class="modal-body">${body}</div><div class="form-error" role="alert"></div><div class="modal-footer">${button('Hủy','close','','btn')}<button type="submit" class="btn btn-primary">${escape(submitLabel)}</button></div></form>`;
-const textField=(label,name,value='',required=true,placeholder='')=>`<label class="field">${escape(label)}${required?' *':''}<input name="${name}" value="${escape(value)}" ${required?'required':''} placeholder="${escape(placeholder)}" maxlength="300"></label>`;
-const textarea=(label,name,value='',min=10)=>`<label class="field">${escape(label)} *<textarea name="${name}" required minlength="${min}" maxlength="6000">${escape(value)}</textarea></label>`;
-function fileField(anonymous=false) { return `<div class="field">${anonymous?'Tệp đã ẩn danh':'Tệp bản thảo'}<div class="file-field"><input type="file" name="attachment" aria-label="${anonymous?'Chọn tệp ẩn danh':'Chọn tệp bản thảo'}" accept=".doc,.docx,.pdf"><label class="check-line"><input type="checkbox" name="sample" checked>Dùng tệp mẫu nếu chưa chọn tệp đính kèm</label></div><small>DOC, DOCX hoặc PDF · Tối đa 10 MB · Lưu trên trình duyệt hiện tại.</small></div>`; }
-function showSubmit() {
- if(actor.role!=='author')return;
- modal('Nộp bài viết mới',form('submit','',`${textField('Tên bài viết','title') }<div class="form-grid">${textField('Người nộp','author',actor.name,false)}<label class="field">Chuyên mục *<select name="category"><option>Đào tạo, bồi dưỡng</option><option>Nghiên cứu, trao đổi</option><option>Thực tiễn cơ sở</option></select></label></div>${textField('Đơn vị công tác','agency',actor.agency||'',false)}${textarea('Tóm tắt nội dung','text','',40)}${fileField()}<div class="note">Bài gửi thử được lưu trên trình duyệt này. Chuyển sang vai trò Thư ký để thực hiện sơ duyệt.</div>`,'Gửi bài thử'),'TIẾP NHẬN BẢN THẢO');
- $('#dialog-content input[name=author]').readOnly=true;
-}
-function downloadCard(a,file,label,kind,version) { return `<div class="file-card">${icon('file')}<div><strong>${escape(file.name)}</strong><small>${escape(label)}${file.sample?' · Tệp minh họa':''}</small></div>${button('Tải tệp','download-file',a.id,'text-btn','download').replace('data-action="download-file"',`data-action="download-file" data-kind="${kind}" data-version="${version}"`)}</div>`; }
-function showDetail(id) {
- const source=state.articles.find(a=>a.id===id), a=source&&B.projectArticle(source,actor);if(!a){toast('Hồ sơ không thuộc vai trò hiện tại.');return;}
- const reviewer=actor.role==='reviewer', secretary=actor.role==='secretary', own=a.reviews.find(r=>r.version===a.version&&r.reviewerId===actor.id);
- let content=`${badge(a.status)}<div class="summary-grid"><div><small>Mã hồ sơ</small><strong>${escape(a.code)}</strong></div><div><small>Phiên bản hiện tại</small><strong>Bản ${String(a.version).padStart(2,'0')}</strong></div><div><small>Chuyên mục</small>${escape(a.category)}</div>${!reviewer?`<div><small>Người nộp</small>${escape(a.authorName)}</div><div><small>Đơn vị</small>${escape(a.agency)}</div><div><small>Tiếp nhận</small>${fmt(a.created)}</div>`:''}</div>`;
- if(reviewer)content+=`<div class="note">Bản thảo ẩn danh · Kết quả được gửi riêng về thư ký. Không hiển thị danh tính tác giả hoặc nhận xét của người phản biện khác.</div>`;
- content+=`<section class="detail-section"><h3>${reviewer?'Nội dung dùng cho phản biện':'Tóm tắt bản thảo'}</h3><p>${escape(reviewer?a.anonymous?.text||'Phiên bản mới đang được chuẩn bị; nội dung sẽ xuất hiện sau khi được phân công lại.':a.text)}</p></section>`;
- if(!reviewer)content+=`<section class="detail-section"><h3>Phiên bản bản thảo</h3>${a.versions.slice().reverse().map(v=>downloadCard(a,v.file,`Bản ${v.number} · ${fmt(v.created)}`,'original',v.number)).join('')}</section>`;
- if((reviewer||secretary)&&a.anonymous)content+=`<section class="detail-section"><h3>Tệp phản biện đã ẩn danh</h3>${downloadCard(a,a.anonymous.file,`Bản ${a.anonymous.version} · Đã xác nhận kiểm tra`,'anonymous',a.anonymous.version)}</section>`;
- if((reviewer||secretary)&&a.reviews.length)content+=`<section class="detail-section"><h3>${reviewer?'Kết quả đã gửi':'Các lượt phản biện'}</h3>${a.reviews.slice().sort((x,y)=>y.version-x.version).map(r=>`<div class="review-card"><header><div><strong style="font-size:11px">${reviewer?'Lượt phản biện của vai trò hiện tại':escape(person(r.reviewerId)?.name)}</strong><small class="subline">Phiên bản ${r.version} · Hạn ${fmt(r.due)}</small></div>${r.result?badge(r.result):badge('reviewing',r.version===a.version&&a.status==='reviewing'?'Chờ kết quả':'Lượt đã kết thúc')}</header>${r.comment?`<p class="comment">${escape(r.comment)}</p>`:''}</div>`).join('')}</section>`;
- if(!reviewer&&a.feedback.length)content+=`<section class="detail-section"><h3>Ý kiến gửi người nộp</h3>${a.feedback.slice().reverse().map(f=>`<div class="feedback-box"><small>Phiên bản ${f.version} · ${fmt(f.at)}</small><p>${escape(f.text)}</p></div>`).join('')}</section>`;
- if(!reviewer)content+=`<section class="detail-section"><h3>Lịch sử xử lý</h3><ul class="timeline">${a.history.slice().reverse().map(h=>`<li>${escape(h.text)}<time>${fmt(h.at)}</time></li>`).join('')}</ul></section>`;
- let actions='';
- if(secretary){
-  if(a.status==='submitted')actions+=button('Sơ duyệt bài viết','screen',id,'btn btn-primary','check');
-  if(a.status==='ready')actions+=button('Chuẩn bị & phân công','assign',id,'btn btn-primary','people');
-  if(['reviewing','results'].includes(a.status)&&B.activeReviews(source).some(r=>['reject','revise'].includes(r.result)))actions+=button('Tổng hợp & trả bản sửa','return',id,'btn btn-primary','repeat');
-  if(a.status==='results'&&B.allPass(source))actions+=button('Xác nhận đạt phản biện','approve',id,'btn btn-primary','check');
-  if(a.status==='approved')actions+=button('Đăng bài thử','publish',id,'btn btn-primary','send');
- }
- if(actor.role==='author'&&a.status==='revision')actions+=button('Nộp bản chỉnh sửa','resubmit',id,'btn btn-primary','repeat');
- if(reviewer&&own&&!own.result&&a.status==='reviewing')actions+=button('Gửi đánh giá','review',id,'btn btn-primary','check');
- content+=`<div class="action-row">${actions}</div>`;
- modal(a.title,`<div class="modal-body">${content}</div>`,'CHI TIẾT HỒ SƠ');
-}
-function showScreen(id) { const a=state.articles.find(a=>a.id===id); if(actor.role!=='secretary'||a?.status!=='submitted')return; modal('Sơ duyệt bài viết',form('screen',id,`<div class="note"><strong>${escape(a.code)}</strong> · ${escape(a.title)}</div><div class="form-radios"><label class="radio-label"><input name="decision" type="radio" value="pass" checked>Đạt, chuyển phân công</label><label class="radio-label"><input name="decision" type="radio" value="return">Chưa đạt, trả bổ sung</label></div><label class="field">Ý kiến sơ duyệt<textarea name="note" placeholder="Ghi rõ yêu cầu bổ sung khi trả bài…" maxlength="5000"></textarea></label>`,'Lưu sơ duyệt'),'KIỂM TRA BẢN THẢO'); }
-function showAssign(id) {
- const a=state.articles.find(a=>a.id===id);if(actor.role!=='secretary'||a?.status!=='ready')return;
- modal('Chuẩn bị bản ẩn danh & phân công',form('assign',id,`<div class="note warm">Kiểm tra tên tác giả, đơn vị, lời cảm ơn, bình luận và metadata của tệp. Nội dung không được tự động bảo đảm đã ẩn danh.</div><div style="height:18px"></div>${textField('Tiêu đề dùng cho phản biện','title',a.title)}${textarea('Nội dung dùng cho phản biện','text',a.text,40)}${fileField(true)}<label class="check-line"><input type="checkbox" name="checked" required>Đã kiểm tra tiêu đề, nội dung và tệp; bản phản biện không tiết lộ danh tính tác giả.</label><div style="height:12px"></div><span class="field">Người phản biện * · Chọn một hoặc nhiều người</span><div class="select-people">${state.people.filter(p=>p.role==='reviewer').map(p=>`<div class="select-person"><label class="check-line"><input type="checkbox" name="reviewerIds" value="${escape(p.id)}"><span>${escape(p.name)}<small>${escape(p.specialty)}</small></span></label><label class="field">Hạn xử lý<input type="date" name="due-${escape(p.id)}" aria-label="Hạn của ${escape(p.name)}" value="${B.offset(7)}" min="${B.date()}"></label></div>`).join('')}</div><div class="note">Thời hạn có thể đặt riêng cho từng người phản biện được chọn.</div>`,'Giao phản biện'),'PHẢN BIỆN ĐỘC LẬP');
-}
-function showReview(id) {
- const a=state.articles.find(a=>a.id===id), view=a&&B.projectArticle(a,actor), own=a&&B.activeReviews(a).find(r=>r.reviewerId===actor.id);
- if(actor.role!=='reviewer'||!view||!own||own.result||a.status!=='reviewing')return;
- modal('Gửi kết quả phản biện',form('review',id,`<div class="note"><strong>${escape(a.code)}</strong> · Phiên bản ${a.version} · Hạn ${fmt(own.due)}</div><section class="detail-section"><h3>${escape(view.title)}</h3><p>${escape(view.anonymous?.text)}</p>${view.anonymous?downloadCard(view,view.anonymous.file,'Tệp đã ẩn danh','anonymous',a.version):''}</section><span class="field">Kết quả đánh giá *</span><div class="form-radios">${Object.entries(B.results).map(([r,label],i)=>`<label class="radio-label"><input type="radio" name="result" value="${r}"${!i?' checked':''}>${label}</label>`).join('')}</div>${textarea('Nhận xét gửi thư ký','comment')}<div class="note">Nhận xét được gửi riêng về thư ký để tổng hợp. Sau khi gửi, lượt đánh giá này được ghi nhận hoàn tất.</div>`,'Gửi kết quả'),'BẢN THẢO ẨN DANH');
-}
-function showReturn(id) { const a=state.articles.find(a=>a.id===id);if(actor.role!=='secretary')return; modal('Tổng hợp ý kiến & trả bản sửa',form('return',id,`<div class="note"><strong>${escape(a.code)}</strong> · ${escape(a.title)}</div><section class="detail-section"><h3>Ý kiến đánh giá đã nhận</h3>${B.activeReviews(a).filter(r=>r.result).map(r=>`<div class="review-card"><strong style="font-size:11px">${escape(person(r.reviewerId)?.name)} · ${B.results[r.result]}</strong><p class="comment">${escape(r.comment)}</p></div>`).join('')}</section>${textarea('Ý kiến tổng hợp gửi người nộp','note')}<label class="check-line"><input type="checkbox" name="checked" required>Đã kiểm tra ý kiến tổng hợp không tiết lộ tên và danh tính người phản biện.</label>`,'Gửi yêu cầu chỉnh sửa'),'TỔNG HỢP QUA THƯ KÝ'); }
-function showResubmit(id) { const a=state.articles.find(a=>a.id===id);if(actor.role!=='author'||a?.authorId!==actor.id||a.status!=='revision')return;modal('Nộp bản chỉnh sửa',form('resubmit',id,`<div class="note"><strong>${escape(a.code)}</strong> · Phiên bản tiếp theo: ${a.version+1}</div>${a.feedback.at(-1)?`<div class="feedback-box"><small>Yêu cầu bổ sung gần nhất</small><p>${escape(a.feedback.at(-1).text)}</p></div>`:''}<div style="height:18px"></div>${textarea('Nội dung bản sửa','text',a.text,40)}${fileField()}<div class="note">Bản sửa được chuyển lại thư ký để sơ duyệt và phân công phản biện cho phiên bản mới.</div>`,'Gửi bản chỉnh sửa'),'TIẾP NHẬN PHIÊN BẢN MỚI'); }
-function showApprove(id) { if(actor.role!=='secretary')return;const a=state.articles.find(a=>a.id===id);modal('Xác nhận đạt phản biện',form('approve',id,`<div class="note"><strong>${escape(a.code)}</strong> · ${escape(a.title)}</div><section class="detail-section"><h3>Kết quả của phiên bản ${a.version}</h3>${B.activeReviews(a).map(r=>`<div class="metric"><span>${escape(person(r.reviewerId)?.name)}</span>${badge(r.result||'reviewing',r.result?B.results[r.result]:'Chưa có kết quả')}</div>`).join('')}</section><div class="note">Chỉ xác nhận khi tất cả người được giao đều đánh giá đạt cho phiên bản hiện tại.</div>`,'Xác nhận đạt'),'HOÀN TẤT TỔNG HỢP'); }
-function showPublish(id) { if(actor.role!=='secretary')return;const a=state.articles.find(a=>a.id===id), issues=state.issues.filter(x=>!x.published&&(!a.issueId||a.issueId===x.id));modal('Đăng bài trong bản dùng thử',issues.length?form('publish',id,`<div class="note"><strong>${escape(a.code)}</strong> · ${escape(a.title)}</div><div style="height:18px"></div><label class="field">Số bản tin *<select name="issueId">${issues.map(x=>`<option value="${escape(x.id)}">${escape(x.number)} · ${escape(x.title)}</option>`).join('')}</select></label><div class="note">Ghi nhận đăng bài trong bản dùng thử. Chưa kết nối xuất bản lên website chính thức của trường.</div>`,'Xác nhận đăng bài'):`<div class="modal-body"><div class="note">Chưa có số bản tin đang biên tập phù hợp. Tạo số mới hoặc điều chỉnh mục lục trước khi đăng.</div><div class="action-row">${button('Tạo số bản tin','issue-edit','','btn btn-primary','plus')}</div></div>`,'BIÊN TẬP & ĐĂNG BÀI'); }
-function showIssue(id) {
- if(actor.role!=='secretary')return;const issue=state.issues.find(x=>x.id===id);
- if(issue?.published){modal(`Mục lục số ${issue.number}`,`<div class="modal-body"><div class="note">Đã ghi nhận phát hành ngày ${fmt(issue.publishedAt || issue.date)}.</div><ol class="issue-list">${issue.articleIds.map((id,i)=>{const a=state.articles.find(a=>a.id===id);return `<li><span>${String(i+1).padStart(2,'0')}</span><button class="article-link" data-action="detail" data-id="${escape(id)}">${escape(a?.title)}</button></li>`;}).join('')}</ol></div>`,'SỐ BẢN TIN ĐÃ PHÁT HÀNH');return;}
- const selected=issue?.articleIds||[], candidates=[...selected,...state.articles.filter(a=>a.status==='approved'&&(!a.issueId||a.issueId===issue?.id)&&!selected.includes(a.id)).map(a=>a.id)];
- modal(issue?`Biên tập số ${issue.number}`:'Tạo số bản tin',form('issue_save',id,`<div class="form-grid">${textField('Số bản tin','number',issue?.number||'') }<label class="field">Ngày dự kiến phát hành *<input type="date" name="date" value="${issue?.date||B.offset(7)}" required></label></div>${textField('Tên bản tin','title',issue?.title||'Thông tin lý luận và thực tiễn')}<span class="field">Chọn bài và sắp thứ tự mục lục</span><div id="issue-picks">${candidates.map(id=>{const a=state.articles.find(a=>a.id===id);return `<div class="issue-pick" data-pick="${escape(id)}"><input type="checkbox" name="articleIds" value="${escape(id)}" aria-label="Chọn ${escape(a.code)}"${selected.includes(id)?' checked':''}${a.status==='published'?' disabled':''}><span>${escape(a.title)}<small>${escape(a.code)} · ${B.statuses[a.status]}</small></span><button type="button" class="icon-btn" data-action="issue-up" data-id="${escape(id)}" aria-label="Đưa ${escape(a.code)} lên">↑</button><button type="button" class="icon-btn" data-action="issue-down" data-id="${escape(id)}" aria-label="Đưa ${escape(a.code)} xuống">↓</button></div>`;}).join('')||'<div class="note">Chưa có bài đạt phản biện để xếp vào số.</div>'}</div>`,'Lưu số bản tin'),'MỤC LỤC & KẾ HOẠCH');
-}
-function showIssuePublish(id) { if(actor.role!=='secretary')return;const issue=state.issues.find(x=>x.id===id);modal(`Phát hành số ${issue.number}`,form('issue_publish',id,`<div class="note"><strong>${escape(issue.title)}</strong> · ${issue.articleIds.length} bài</div><section class="detail-section"><h3>Điều kiện phát hành</h3><p>Tất cả bài trong mục lục phải đạt phản biện ở phiên bản hiện tại. Các bài được ghi nhận đã đăng trong bản dùng thử.</p></section>`,'Xác nhận phát hành'),'BIÊN TẬP & PHÁT HÀNH'); }
-function openDatabase() { if(!fileDatabase)fileDatabase=new Promise((resolve,reject)=>{const request=indexedDB.open('tayninh-bantin-files-v2',1);request.onupgradeneeded=()=>request.result.createObjectStore('files');request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(new Error('Không mở được nơi lưu tệp trên trình duyệt.'));});return fileDatabase; }
-async function fileStore(operation,key,value) {const db=await openDatabase();return new Promise((resolve,reject)=>{const tx=db.transaction('files',operation==='put'?'readwrite':'readonly'), store=tx.objectStore('files'),req=operation==='put'?store.put(value,key):store.get(key);let result;req.onsuccess=()=>{result=req.result;};tx.oncomplete=()=>resolve(result);tx.onerror=()=>reject(new Error('Chưa lưu được tệp. Kiểm tra dung lượng trình duyệt.'));tx.onabort=()=>reject(new Error('Thao tác lưu tệp bị gián đoạn.'));});}
-async function collectFile(formElement) {
- const f=formElement.elements.attachment.files[0];
- if(!f){if(!formElement.elements.sample.checked)throw new Error('Chọn tệp đính kèm hoặc sử dụng tệp mẫu.');return {sample:true,ext:'txt',size:0};}
- const ext=f.name.split('.').at(-1).toLowerCase();if(!['doc','docx','pdf'].includes(ext)||f.size>10*1024*1024||f.size===0)throw new Error('Chọn tệp DOC, DOCX hoặc PDF có nội dung, tối đa 10 MB.');
- const key=crypto.randomUUID();await fileStore('put',key,f);return {key,name:f.name,ext,size:f.size,sample:false};
-}
-function saveDownload(blob,name) {const url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
-async function downloadFile(id,kind,version) {
- const a=state.articles.find(a=>a.id===id),view=a&&B.projectArticle(a,actor);if(!view)throw new Error('Tệp không thuộc phạm vi vai trò hiện tại.');
- let file,text;
- if(kind==='anonymous'&&['reviewer','secretary'].includes(actor.role)&&view.anonymous&&view.anonymous.version===Number(version)){file=view.anonymous.file;text=view.anonymous.text;}
- else if(kind==='original'&&['secretary','author'].includes(actor.role)){const v=view.versions.find(v=>v.number===Number(version));file=v?.file;text=v?.text;}
- if(!file)throw new Error('Tệp không thuộc phân công hoặc phiên bản được phép xem.');
- const blob=file.sample?new Blob([`${kind==='anonymous'?view.anonymous.title:view.title}\n${view.code} · Phiên bản ${version}\n\n${text}\n\nTỆP MINH HỌA TRONG BẢN DÙNG THỬ.`],{type:'text/plain;charset=utf-8'}):await fileStore('get',file.key);
- if(!blob)throw new Error('Tệp không còn trên trình duyệt này.');saveDownload(blob,file.name);
-}
-function exportCSV() {const list=scoped(),rows=[['Trạng thái','Số bài'],...Object.entries(B.statuses).map(([s,label])=>[label,list.filter(a=>a.status===s).length])];if(actor.role==='secretary')rows.push([],['Mã hồ sơ','Tên bài','Người nộp','Chuyên mục','Phiên bản','Trạng thái'],...list.map(a=>[a.code,a.title,a.authorName,a.category,a.version,B.statuses[a.status]]));const safe=v=>{let s=String(v??'');if(/^[=+\-@\t\r]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';};saveDownload(new Blob(['\ufeff'+rows.map(r=>r.map(safe).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}),`bao-cao-ban-tin-${B.date()}.csv`);toast('Đã tải báo cáo theo phạm vi vai trò hiện tại.');}
-async function handleForm(event) {
- const f=event.target;if(!f.matches('form[data-form]'))return;event.preventDefault();const submit=f.querySelector('button[type=submit]'),error=f.querySelector('.form-error');submit.disabled=true;error.classList.remove('visible');
- try {const data=new FormData(f),type=f.dataset.form;let p={id:f.dataset.id};
-  for(const name of ['title','text','category','agency','decision','note','due','result','comment','issueId','number','date','specialty','name'])if(data.has(name))p[name]=data.get(name);
-  p.checked=data.has('checked');
-  if(['submit','assign','resubmit'].includes(type))p.file=await collectFile(f);
-  if(type==='assign'){p.reviewerIds=data.getAll('reviewerIds');p.dueMap=Object.fromEntries(p.reviewerIds.map(id=>[id,data.get('due-'+id)]));}
-  if(type==='issue_save'){p.issueId=f.dataset.id||null;p.articleIds=Array.from(f.querySelectorAll('input[name=articleIds]')).filter(el=>el.checked).map(el=>el.value);}
-  if(type==='issue_publish')p.issueId=f.dataset.id;
-  if(type==='reset'){try{localStorage.setItem(BACKUP_KEY,JSON.stringify(state));}catch{throw new Error('Chưa lưu được bản để hoàn tác.');}commit(B.seed());closeModal();render();toast('Đã khôi phục dữ liệu mẫu. Có thể hoàn tác tại Vai trò & quy trình.');return;}
-  transition(type,p,{submit:'Đã tiếp nhận bài thử. Chuyển sang Thư ký để sơ duyệt.',screen:'Đã lưu kết quả sơ duyệt.',assign:'Đã giao bản ẩn danh cho các người phản biện được chọn.',review:'Đã gửi kết quả riêng về thư ký.',return:'Đã gửi yêu cầu chỉnh sửa cho người nộp.',resubmit:'Đã nộp phiên bản mới; chờ sơ duyệt lại.',approve:'Đã xác nhận đạt phản biện.',publish:'Đã ghi nhận đăng bài trong bản dùng thử.',issue_save:'Đã lưu mục lục và kế hoạch số bản tin.',issue_publish:'Đã phát hành số bản tin trong bản dùng thử.',reviewer_add:'Đã bổ sung người phản biện và chế độ trải nghiệm tương ứng.'}[type]||'Đã lưu thao tác.');
- } catch(e){error.textContent=e.message;error.classList.add('visible');submit.disabled=false;error.scrollIntoView({block:'nearest'});}
-}
-document.addEventListener('submit',handleForm);
-document.addEventListener('click',async event=>{
- const target=event.target.closest('[data-page],[data-action]');if(!target)return;if(target.dataset.page){navigate(target.dataset.page);return;}const action=target.dataset.action,id=target.dataset.id;
- try {
-  if(action.startsWith('nav-'))return navigate(action.slice(4));
-  if(action==='close')return closeModal();
-  if(action==='guide')return modal('Từ bài nộp đến số bản tin',`<div class="modal-body">${flow()}<div style="height:22px"></div>${permissionTable()}</div>`,'QUY TRÌNH BIÊN TẬP');
-  const actions={detail:showDetail,submit:showSubmit,screen:showScreen,assign:showAssign,review:showReview,return:showReturn,resubmit:showResubmit,approve:showApprove,publish:showPublish,'issue-edit':showIssue,'issue-publish':showIssuePublish};
-  if(actions[action])return actions[action](id);
-  if(action==='reviewer-add'&&actor.role==='secretary')return modal('Bổ sung người phản biện',form('reviewer_add','',`${textField('Tên hiển thị','name','',true,'Ví dụ: Phản biện 04')}${textField('Chuyên môn','specialty','',false)}<div class="note">Người phản biện mới xuất hiện trong danh sách phân công và danh sách vai trò dùng thử.</div>`,'Thêm người phản biện'),'DANH SÁCH PHẢN BIỆN');
-  if(action==='download-file')return await downloadFile(id,target.dataset.kind,target.dataset.version);
-  if(action==='csv')return exportCSV();
-  if(action==='issue-up'||action==='issue-down'){const row=target.closest('.issue-pick'),picks=row.parentElement;if(action==='issue-up'&&row.previousElementSibling)picks.insertBefore(row,row.previousElementSibling);if(action==='issue-down'&&row.nextElementSibling)picks.insertBefore(row.nextElementSibling,row);return;}
-  if(action==='backup'&&actor.role==='secretary'){saveDownload(new Blob([JSON.stringify(state,null,2)],{type:'application/json'}),`du-lieu-ban-tin-${B.date()}.json`);return toast('Đã xuất dữ liệu hồ sơ, không bao gồm tệp đính kèm.');}
-  if(action==='reset'&&actor.role==='secretary')return modal('Khôi phục bộ dữ liệu mẫu',form('reset','',`<div class="note">Các thao tác trong bản dùng thử trên trình duyệt này sẽ được thay bằng bộ hồ sơ mẫu ban đầu. Trạng thái hiện tại được giữ lại để hoàn tác.</div>`,'Khôi phục dữ liệu mẫu'),'THỬ LẠI QUY TRÌNH');
-  if(action==='undo-reset'&&actor.role==='secretary'){const previous=JSON.parse(localStorage.getItem(BACKUP_KEY)||'null');if(!previous||previous.schema!==2)throw new Error('Chưa có lần khôi phục để hoàn tác.');const current=state;commit(previous);localStorage.setItem(BACKUP_KEY,JSON.stringify(current));render();return toast('Đã hoàn tác lần khôi phục.');}
- } catch(e){toast(e.message);}
-});
-$('#role').addEventListener('change',event=>{actorKey=event.target.value;actor=B.actorInfo(state,actorKey);try{localStorage.setItem(ROLE_KEY,actorKey);}catch{}search='';filter='';closeModal();page='overview';render();toast(`Đang trải nghiệm: ${actor.name}`);});
-$('#close-dialog').addEventListener('click',closeModal);
-$('#dialog').addEventListener('click',event=>{if(event.target===event.currentTarget){const rect=$('#dialog').getBoundingClientRect();if(event.clientX<rect.left||event.clientX>rect.right||event.clientY<rect.top||event.clientY>rect.bottom)closeModal();}});
-document.addEventListener('input',event=>{if(event.target.id==='article-search'){search=event.target.value;$('#articles-table').innerHTML=articleList();}});
-document.addEventListener('change',event=>{if(event.target.id==='article-filter'){filter=event.target.value;$('#articles-table').innerHTML=articleList();}});
-window.addEventListener('hashchange',()=>{if(location.hash==='#overview')navigate('overview');});
-window.addEventListener('storage',event=>{if(event.key===KEY&&event.newValue){try{const updated=JSON.parse(event.newValue);if(updated.schema===2){state=updated;actor=B.actorInfo(state,actorKey);closeModal();render();toast('Dữ liệu được cập nhật từ tab khác trên cùng trình duyệt.');}}catch{}}});
-render();
+  'use strict';
+
+  const U = window.UI;
+  const { B, S, KEYS, $, $$, esc, fold, icon, fmt, pad, badge, button, avatar, person, toast, tasks, dueInfo } = U;
+  const V = U.views;
+
+  let lastFocused = null;
+  let dialogReturn = null;
+  let pendingImport = null;
+  let fileDatabase = null;
+
+  /* ---------- Hiển thị khung ứng dụng ---------- */
+
+  const roleInitials = actor => actor.role === 'secretary' ? 'TK' : actor.role === 'leader' ? (actor.id === 'chief' ? 'TB' : 'PB') : U.initials(actor.name);
+
+  function renderShell() {
+    const pages = U.allowedPages();
+    const link = (p, cls) => `<button type="button" class="${cls}${S.page === p ? ' active' : ''}" data-page="${p}" aria-label="${esc(U.pageLabel(p))}"${S.page === p ? ' aria-current="page"' : ''}>${icon(U.pageIcons[p])}<span>${esc(U.pageLabel(p))}</span>${cls === 'nav-item' && p === 'articles' ? `<span class="nav-count">${U.projected().length}</span>` : ''}</button>`;
+    $('#navigation').innerHTML = pages.map(p => link(p, 'nav-item')).join('');
+    $('#tabbar').innerHTML = pages.map(p => link(p, 'tab-item')).join('');
+    document.title = `${U.pageLabel(S.page)} | Bản tin Trường Chính trị tỉnh Tây Ninh`;
+    const label = `${esc(S.actor.name)}`;
+    $('#role-btn').innerHTML = `${avatar(roleInitials(S.actor))}<span class="role-text"><strong>${label}</strong><small>${esc(S.actor.label)}</small></span>${icon('chevron')}`;
+    $('#role-btn-top').innerHTML = avatar(roleInitials(S.actor));
+    $('#role-btn-top').setAttribute('aria-label', `Vai trò hiện tại: ${S.actor.name}. Đổi vai trò`);
+    const count = tasks().length;
+    const badgeEl = $('#bell-count');
+    badgeEl.textContent = count > 9 ? '9+' : String(count);
+    badgeEl.hidden = !count;
+    $('#theme-btn').innerHTML = icon(U.currentTheme() === 'dark' ? 'sun' : 'moon');
+    $('#theme-btn').setAttribute('aria-label', U.currentTheme() === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối');
+  }
+
+  function renderNotice() {
+    const parts = [];
+    if (S.notice) parts.push(`<div class="banner" data-tone="warn">${icon('alert')}<span>${esc(S.notice)}</span></div>`);
+    $('#notice-slot').innerHTML = parts.join('');
+  }
+
+  function render() {
+    if (!U.allowedPages().includes(S.page)) S.page = 'overview';
+    renderShell();
+    renderNotice();
+    $('#content').innerHTML = V[S.page]();
+  }
+
+  function navigate(page, focus = true) {
+    if (!U.allowedPages().includes(page)) return;
+    closeDialog();
+    closeMenu();
+    S.page = page;
+    render();
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    if (focus) $('#content').focus({ preventScroll: true });
+  }
+
+  /* ---------- Hộp thoại ---------- */
+
+  const dlg = () => $('#dialog');
+
+  function openDialog({ title, meta = '', body, variant = 'modal' }) {
+    const d = dlg();
+    if (!d.open) lastFocused = document.activeElement;
+    d.dataset.variant = variant;
+    delete d.dataset.detailId;
+    $('#dialog-title').textContent = title;
+    $('#dialog-meta').innerHTML = meta;
+    $('#dialog-content').innerHTML = body;
+    $('.dlg-head', d).hidden = variant === 'palette';
+    if (!d.open) d.showModal();
+    $('.dlg-body', d)?.scrollTo?.(0, 0);
+  }
+
+  function closeDialog() {
+    const d = dlg();
+    dialogReturn = null;
+    if (d.open) d.close();
+  }
+
+  function formDialog({ title, body, submit, type, id = '', variant = 'modal', meta = '', danger = false }) {
+    const back = dlg().open && dlg().dataset.variant === 'drawer' ? dlg().dataset.detailId : null;
+    dialogReturn = back || null;
+    openDialog({
+      title, meta, variant,
+      body: `<form class="dlg-form" data-form="${esc(type)}" data-id="${esc(id)}" novalidate><div class="dlg-body">${body}<div class="form-error" role="alert"></div></div><div class="dlg-foot"><button type="button" class="btn" data-action="cancel">Hủy</button><button type="submit" class="btn ${danger ? 'btn-danger-solid' : 'btn-primary'}">${esc(submit)}</button></div></form>`
+    });
+  }
+
+  /* ---------- Thành phần biểu mẫu ---------- */
+
+  const field = (label, control, { hint = '', required = false } = {}) =>
+    `<label class="field"><span class="label">${esc(label)}${required ? '<em aria-hidden="true"> *</em>' : ''}</span>${control}${hint ? `<small class="hint">${esc(hint)}</small>` : ''}</label>`;
+  const input = (name, value = '', { required = true, placeholder = '', max = 300, type = 'text', extra = '' } = {}) =>
+    `<input type="${type}" name="${name}" value="${esc(value)}"${required ? ' required' : ''} maxlength="${max}" placeholder="${esc(placeholder)}" autocomplete="off" ${extra}>`;
+  const textarea = (name, value = '', { max = 6000, rows = 5, placeholder = '' } = {}) =>
+    `<textarea name="${name}" rows="${rows}" maxlength="${max}" placeholder="${esc(placeholder)}" data-counter>${esc(value)}</textarea><span class="counter">${value.length} / ${max}</span>`;
+  const note = (html, tone = 'info') => `<div class="callout" data-tone="${tone}">${icon(tone === 'warn' ? 'alert' : 'info')}<div>${html}</div></div>`;
+  const check = (name, label, extra = '') => `<label class="check"><input type="checkbox" name="${name}" ${extra}><span>${esc(label)}</span></label>`;
+  const articleRef = a => `<div class="ref"><strong>${esc(a.code)}</strong><span>${esc(a.title)}</span></div>`;
+
+  function fileField(anonymous = false) {
+    const label = anonymous ? 'Tệp đã ẩn danh' : 'Tệp bài viết';
+    const hint = anonymous ? 'Không chọn tệp thì hệ thống tạo tệp Word ẩn danh từ nội dung ở trên.' : 'Không chọn tệp thì hệ thống tạo tệp Word từ tên bài và tóm tắt ở trên.';
+    return `<div class="field"><span class="label">${label}</span>
+      <label class="dropzone">
+        <input type="file" name="attachment" accept=".doc,.docx,.pdf" aria-label="${label}">
+        ${icon('upload')}
+        <span class="dz-text"><strong>Chọn tệp</strong> hoặc kéo thả vào đây</span>
+        <small>Word (DOC, DOCX) hoặc PDF, tối đa 10 MB</small>
+        <span class="dz-name" hidden></span>
+      </label>
+      <small class="hint">${hint}</small>
+    </div>`;
+  }
+
+  /* ---------- Chi tiết hồ sơ ---------- */
+
+  function showDetail(id) {
+    const view = V.detail(id);
+    if (!view) { toast('Hồ sơ không thuộc phạm vi của vai trò hiện tại.', 'error'); return; }
+    openDialog({
+      title: view.title,
+      meta: `${view.badge}<span class="code">${esc(view.code)}</span>`,
+      variant: 'drawer',
+      body: `<div class="dlg-body">${view.body}</div>${view.actions ? `<div class="dlg-foot">${view.actions}</div>` : ''}`
+    });
+    dlg().dataset.detailId = id;
+  }
+
+  /* ---------- Các biểu mẫu nghiệp vụ ---------- */
+
+  function showSubmit() {
+    if (S.actor.role !== 'author') return;
+    formDialog({
+      title: 'Nộp bài viết mới', type: 'submit', submit: 'Gửi bài',
+      body: `${field('Tên bài viết', input('title', '', { placeholder: 'Từ 10 ký tự trở lên' }), { required: true })}
+        <div class="form-grid">
+          ${field('Chuyên mục', `<select name="category">${B.categories.map(c => `<option>${esc(c)}</option>`).join('')}</select>`, { required: true })}
+          ${field('Đơn vị công tác', input('agency', S.actor.agency || '', { required: false }))}
+        </div>
+        ${field('Tóm tắt nội dung', textarea('text', '', { placeholder: 'Nêu vấn đề, phạm vi và kết quả chính của bài viết (từ 40 ký tự)' }), { required: true })}
+        ${fileField()}`
+    });
+  }
+
+  function showScreen(id) {
+    const a = S.state.articles.find(x => x.id === id);
+    if (S.actor.role !== 'secretary' || a?.status !== 'submitted') return;
+    formDialog({
+      title: 'Sơ duyệt bài viết', type: 'screen', id, submit: 'Lưu sơ duyệt',
+      body: `${articleRef(a)}
+        <fieldset class="choice-group"><legend>Kết quả sơ duyệt</legend>
+          <label class="choice" data-s="approved"><input type="radio" name="decision" value="pass" checked><span><strong>Đạt</strong><small>Chuyển sang phân công phản biện</small></span></label>
+          <label class="choice" data-s="revision"><input type="radio" name="decision" value="return"><span><strong>Chưa đạt</strong><small>Trả lại người nộp để bổ sung</small></span></label>
+        </fieldset>
+        ${field('Ý kiến sơ duyệt', textarea('note', '', { rows: 4, max: 5000, placeholder: 'Bắt buộc khi trả bài: nêu rõ nội dung cần bổ sung' }))}`
+    });
+  }
+
+  function showAssign(id) {
+    const a = S.state.articles.find(x => x.id === id);
+    if (S.actor.role !== 'secretary' || a?.status !== 'ready') return;
+    const reviewers = S.state.people.filter(p => p.role === 'reviewer');
+    formDialog({
+      title: 'Chuẩn bị bản ẩn danh và phân công', type: 'assign', id, submit: 'Giao phản biện',
+      body: `${note('<p>Kiểm tra tên tác giả, đơn vị, lời cảm ơn, bình luận và thuộc tính của tệp trước khi giao.</p>', 'warn')}
+        ${field('Tiêu đề dùng cho phản biện', input('title', a.title), { required: true })}
+        ${field('Nội dung dùng cho phản biện', textarea('text', a.text), { required: true })}
+        ${fileField(true)}
+        ${check('checked', 'Đã kiểm tra tiêu đề, nội dung và tệp; bản phản biện không tiết lộ danh tính tác giả.')}
+        <fieldset class="people-pick"><legend>Người phản biện và hạn xử lý</legend>
+          ${reviewers.map(p => `<div class="pick-row"><label class="check"><input type="checkbox" name="reviewerIds" value="${esc(p.id)}"><span><strong>${esc(p.name)}</strong><small>${esc(p.specialty)}</small></span></label><label class="pick-due"><span class="sr-only">Hạn của ${esc(p.name)}</span><input type="date" name="due-${esc(p.id)}" value="${B.offset(7)}" min="${B.date()}"></label></div>`).join('')}
+        </fieldset>`
+    });
+  }
+
+  function showReview(id) {
+    const a = S.state.articles.find(x => x.id === id);
+    const view = a && B.projectArticle(a, S.actor);
+    const own = a && B.activeReviews(a).find(r => r.reviewerId === S.actor.id);
+    if (S.actor.role !== 'reviewer' || !view || !own || own.result || a.status !== 'reviewing') return;
+    const d = dueInfo(own.due);
+    formDialog({
+      title: 'Gửi kết quả phản biện', type: 'review', id, submit: 'Gửi kết quả',
+      meta: `<span class="code">${esc(a.code)}</span><span class="due" data-tone="${d.tone}">${esc(d.text)}</span>`,
+      body: `<section class="block"><h3>${esc(view.title)}</h3><p class="reading">${esc(view.anonymous?.text)}</p>${view.anonymous ? `<div class="file-card">${icon('file')}<div><strong>${esc(view.anonymous.file.name)}</strong><small>${esc(U.fileKind(view.anonymous.file))}, đã ẩn danh</small></div>${button('Tải về', 'download-file', a.id, 'btn btn-sm', 'download', `data-kind="anonymous" data-version="${a.version}"`)}</div>` : ''}</section>
+        <fieldset class="choice-group"><legend>Kết quả đánh giá</legend>
+          <label class="choice" data-s="approved"><input type="radio" name="result" value="pass"><span><strong>Đạt</strong><small>Đáp ứng yêu cầu</small></span></label>
+          <label class="choice" data-s="revision"><input type="radio" name="result" value="revise"><span><strong>Cần chỉnh sửa</strong><small>Chấp nhận nếu sửa theo ý kiến</small></span></label>
+          <label class="choice" data-s="reject"><input type="radio" name="result" value="reject"><span><strong>Không đạt</strong><small>Chưa phù hợp để đăng</small></span></label>
+        </fieldset>
+        <fieldset class="criteria"><legend>Chấm theo tiêu chí <small>Không bắt buộc. 1 là thấp nhất, 5 là cao nhất.</small></legend>
+          ${Object.entries(B.criteria).map(([k, label]) => `<div class="crit"><span>${esc(label)}</span><div class="scale" role="radiogroup" aria-label="${esc(label)}">${[1, 2, 3, 4, 5].map(n => `<label><input type="radio" name="crit-${k}" value="${n}"><span>${n}</span></label>`).join('')}</div></div>`).join('')}
+        </fieldset>
+        ${field('Nhận xét gửi thư ký', textarea('comment', '', { rows: 5, max: 5000, placeholder: 'Từ 10 ký tự trở lên' }), { required: true })}
+        ${note('<p>Nhận xét được gửi riêng về thư ký để tổng hợp. Sau khi gửi, lượt đánh giá này hoàn tất và không sửa lại được.</p>')}`
+    });
+  }
+
+  function showReturn(id) {
+    const a = S.state.articles.find(x => x.id === id);
+    if (S.actor.role !== 'secretary' || !a) return;
+    const got = B.activeReviews(a).filter(r => r.result);
+    formDialog({
+      title: 'Tổng hợp ý kiến và trả bản sửa', type: 'return', id, submit: 'Gửi yêu cầu chỉnh sửa',
+      body: `${articleRef(a)}
+        <section class="block"><h3>Ý kiến đã nhận</h3>${got.map(r => `<div class="review-card"><header><strong>${esc(person(r.reviewerId)?.name)}</strong>${badge(r.result)}</header>${r.comment ? `<p class="comment">${esc(r.comment)}</p>` : ''}</div>`).join('') || '<p class="muted">Chưa có ý kiến nào.</p>'}</section>
+        ${field('Ý kiến tổng hợp gửi người nộp', textarea('note', '', { rows: 5, max: 5000, placeholder: 'Viết lại ý kiến, không nêu tên hoặc dấu hiệu nhận dạng người phản biện' }), { required: true })}
+        ${check('checked', 'Đã kiểm tra ý kiến tổng hợp không tiết lộ tên và danh tính người phản biện.')}`
+    });
+  }
+
+  function showResubmit(id) {
+    const a = S.state.articles.find(x => x.id === id);
+    if (S.actor.role !== 'author' || a?.authorId !== S.actor.id || a.status !== 'revision') return;
+    const last = a.feedback.at(-1);
+    formDialog({
+      title: 'Nộp bản chỉnh sửa', type: 'resubmit', id, submit: 'Gửi bản chỉnh sửa',
+      body: `${articleRef(a)}
+        ${last ? `<div class="feedback"><small>Yêu cầu gần nhất của thư ký</small><p>${esc(last.text)}</p></div>` : ''}
+        ${field(`Nội dung bản sửa (phiên bản ${pad(a.version + 1)})`, textarea('text', a.text), { required: true })}
+        ${fileField()}
+        ${note('<p>Bản sửa được chuyển lại cho thư ký để sơ duyệt, sau đó phân công phản biện cho phiên bản mới.</p>')}`
+    });
+  }
+
+  function showApprove(id) {
+    const a = S.state.articles.find(x => x.id === id);
+    if (S.actor.role !== 'secretary' || !a) return;
+    formDialog({
+      title: 'Xác nhận đạt phản biện', type: 'approve', id, submit: 'Xác nhận đạt',
+      body: `${articleRef(a)}<section class="block"><h3>Kết quả của phiên bản ${a.version}</h3><ul class="plain-list">${B.activeReviews(a).map(r => `<li><span>${esc(person(r.reviewerId)?.name)}</span>${badge(r.result || 'reviewing', r.result ? B.results[r.result] : 'Chưa có kết quả')}</li>`).join('')}</ul></section>${note('<p>Chỉ xác nhận khi tất cả người được giao đều đánh giá đạt cho phiên bản hiện tại.</p>')}`
+    });
+  }
+
+  function showPublish(id) {
+    if (S.actor.role !== 'secretary') return;
+    const a = S.state.articles.find(x => x.id === id);
+    const open = S.state.issues.filter(x => !x.published && (!a.issueId || a.issueId === x.id));
+    if (!open.length) {
+      openDialog({ title: 'Đăng vào số bản tin', body: `<div class="dlg-body">${note('<p>Chưa có số bản tin đang biên tập phù hợp. Tạo số mới hoặc chỉnh mục lục trước khi đăng.</p>', 'warn')}</div><div class="dlg-foot"><button type="button" class="btn" data-action="cancel">Đóng</button>${button('Tạo số bản tin', 'issue-edit', '', 'btn btn-primary', 'plus')}</div>` });
+      return;
+    }
+    formDialog({
+      title: 'Đăng vào số bản tin', type: 'publish', id, submit: 'Xác nhận đăng',
+      body: `${articleRef(a)}${field('Số bản tin', `<select name="issueId">${open.map(x => `<option value="${esc(x.id)}">Số ${esc(x.number)}, ${esc(x.title)}</option>`).join('')}</select>`, { required: true })}${note('<p>Bài sẽ được ghi nhận là đã đăng trong số bản tin đã chọn.</p>')}`
+    });
+  }
+
+  function showExtend(id, reviewerId) {
+    const a = S.state.articles.find(x => x.id === id);
+    const r = a && B.activeReviews(a).find(x => x.reviewerId === reviewerId);
+    if (S.actor.role !== 'secretary' || !r || r.result) return;
+    const base = r.due > B.date() ? r.due : B.date();
+    const d = new Date(base + 'T12:00:00Z');
+    d.setUTCDate(d.getUTCDate() + 3);
+    formDialog({
+      title: 'Gia hạn phản biện', type: 'extend', id, submit: 'Lưu hạn mới',
+      body: `${articleRef(a)}<div class="ref"><strong>${esc(person(reviewerId)?.name)}</strong><span>Hạn hiện tại ${fmt(r.due)}</span></div><input type="hidden" name="reviewerId" value="${esc(reviewerId)}">${field('Hạn mới', `<input type="date" name="due" value="${d.toISOString().slice(0, 10)}" min="${B.date()}" required>`, { required: true })}`
+    });
+  }
+
+  function showRemind(id, reviewerId) {
+    const a = S.state.articles.find(x => x.id === id);
+    const r = a && B.activeReviews(a).find(x => x.reviewerId === reviewerId);
+    if (S.actor.role !== 'secretary' || !r) return;
+    const text = U.reminderText(a, r);
+    openDialog({
+      title: 'Nhắc hạn phản biện',
+      body: `<div class="dlg-body">${note('<p>Sao chép nội dung dưới đây rồi gửi qua Zalo hoặc email.</p>')}<label class="field"><span class="label">Nội dung nhắc</span><textarea id="remind-text" rows="6" readonly>${esc(text)}</textarea></label></div><div class="dlg-foot"><button type="button" class="btn" data-action="cancel">Đóng</button>${button('Sao chép nội dung', 'copy-remind', '', 'btn btn-primary', 'copy')}</div>`
+    });
+  }
+
+  function showReviewerAdd() {
+    if (S.actor.role !== 'secretary') return;
+    formDialog({
+      title: 'Thêm người phản biện', type: 'reviewer_add', submit: 'Thêm',
+      body: `${field('Tên hiển thị', input('name', '', { placeholder: 'Ví dụ: TS. Nguyễn Văn Nam' }), { required: true, hint: 'Tên này chỉ thư ký nhìn thấy.' })}${field('Chuyên môn', input('specialty', '', { required: false }))}`
+    });
+  }
+
+  function showIssue(id) {
+    if (S.actor.role !== 'secretary') return;
+    const issue = S.state.issues.find(x => x.id === id);
+    if (issue?.published) {
+      openDialog({
+        title: `Mục lục số ${issue.number}`,
+        meta: badge('published', 'Đã phát hành'),
+        body: `<div class="dlg-body"><p class="muted">Phát hành ngày ${fmt(issue.publishedAt || issue.date)}.</p><ol class="toc">${issue.articleIds.map(aid => { const a = S.state.articles.find(x => x.id === aid); return a ? `<li><button type="button" class="link" data-action="detail" data-id="${esc(aid)}">${esc(a.title)}</button></li>` : ''; }).join('')}</ol></div><div class="dlg-foot"><button type="button" class="btn" data-action="cancel">Đóng</button></div>`
+      });
+      return;
+    }
+    const selected = issue?.articleIds || [];
+    const candidates = [...selected, ...S.state.articles.filter(a => a.status === 'approved' && (!a.issueId || a.issueId === issue?.id) && !selected.includes(a.id)).map(a => a.id)];
+    formDialog({
+      title: issue ? `Biên tập số ${issue.number}` : 'Tạo số bản tin', type: 'issue_save', id, submit: 'Lưu số bản tin',
+      body: `<div class="form-grid">${field('Số bản tin', input('number', issue?.number || `${pad(S.state.issues.length + 1)}/${new Date().getFullYear()}`), { required: true })}${field('Ngày dự kiến phát hành', `<input type="date" name="date" value="${issue?.date || B.offset(7)}" required>`, { required: true })}</div>
+        ${field('Tên bản tin', input('title', issue?.title || 'Thông tin lý luận và thực tiễn'), { required: true })}
+        <fieldset class="picks"><legend>Chọn bài và sắp thứ tự mục lục</legend><div id="issue-picks">${candidates.map(cid => {
+          const a = S.state.articles.find(x => x.id === cid);
+          return `<div class="issue-pick" data-pick="${esc(cid)}"><label class="check"><input type="checkbox" name="articleIds" value="${esc(cid)}"${selected.includes(cid) ? ' checked' : ''}${a.status === 'published' ? ' disabled' : ''}><span><strong>${esc(a.title)}</strong><small>${esc(a.code)}, ${esc(B.statuses[a.status])}</small></span></label><span class="move"><button type="button" class="icon-btn small" data-action="issue-up" aria-label="Đưa ${esc(a.code)} lên">${icon('up')}</button><button type="button" class="icon-btn small" data-action="issue-down" aria-label="Đưa ${esc(a.code)} xuống">${icon('down')}</button></span></div>`;
+        }).join('') || '<p class="muted pad">Chưa có bài đạt phản biện để xếp vào số.</p>'}</div></fieldset>`
+    });
+  }
+
+  function showIssuePublish(id) {
+    if (S.actor.role !== 'secretary') return;
+    const issue = S.state.issues.find(x => x.id === id);
+    formDialog({
+      title: `Phát hành số ${issue.number}`, type: 'issue_publish', id, submit: 'Xác nhận phát hành',
+      body: `<div class="ref"><strong>${esc(issue.title)}</strong><span>${issue.articleIds.length} bài</span></div>${note('<p>Tất cả bài trong mục lục phải đạt phản biện ở phiên bản hiện tại.</p>')}`
+    });
+  }
+
+  function showIssuePrint(id) {
+    const issue = S.state.issues.find(x => x.id === id);
+    if (!issue) return;
+    const items = issue.articleIds.map(aid => S.state.articles.find(a => a.id === aid)).filter(Boolean);
+    openDialog({
+      title: `Mục lục số ${issue.number}`,
+      body: `<div class="dlg-body print-sheet"><p class="sheet-school">Trường Chính trị tỉnh Tây Ninh</p><h3>${esc(issue.title)}</h3><p class="sheet-no">Số ${esc(issue.number)}, ${fmt(issue.published ? (issue.publishedAt || issue.date) : issue.date)}</p><ol class="toc print">${items.map(a => `<li><span>${esc(a.title)}</span><small>${esc(a.category)}</small></li>`).join('') || '<li><span>Chưa có bài trong mục lục.</span></li>'}</ol></div><div class="dlg-foot"><button type="button" class="btn" data-action="cancel">Đóng</button>${button('In mục lục', 'print', '', 'btn btn-primary', 'printer')}</div>`
+    });
+  }
+
+  function showReset() {
+    if (S.actor.role !== 'secretary') return;
+    formDialog({
+      title: 'Khôi phục dữ liệu ban đầu', type: 'reset', submit: 'Khôi phục', danger: true,
+      body: note('<p>Toàn bộ thao tác trên trình duyệt này sẽ được thay bằng bộ hồ sơ khởi tạo. Trạng thái hiện tại được giữ lại để hoàn tác.</p>', 'warn')
+    });
+  }
+
+  function showImportConfirm(info) {
+    formDialog({
+      title: 'Nhập dữ liệu', type: 'import_confirm', submit: 'Nhập và thay thế', danger: true,
+      body: `${note(`<p>Tệp <strong>${esc(info.name)}</strong> có ${info.articles} hồ sơ và ${info.issues} số bản tin. Dữ liệu hiện tại sẽ được thay thế; bản hiện tại được giữ lại để hoàn tác.</p>`, 'warn')}`
+    });
+  }
+
+  /* ---------- Tìm nhanh ---------- */
+
+  let paletteIndex = 0;
+  let paletteRows = [];
+
+  function paletteItems(query) {
+    const q = fold(query.trim());
+    const out = [];
+    for (const p of U.allowedPages()) out.push({ kind: 'Trang', ico: U.pageIcons[p], label: U.pageLabel(p), run: () => navigate(p) });
+    if (S.actor.role === 'author') out.push({ kind: 'Thao tác', ico: 'plus', label: 'Nộp bài mới', run: showSubmit });
+    if (S.actor.role === 'secretary') {
+      out.push({ kind: 'Thao tác', ico: 'plus', label: 'Tạo số bản tin', run: () => showIssue('') });
+      out.push({ kind: 'Thao tác', ico: 'plus', label: 'Thêm người phản biện', run: showReviewerAdd });
+    }
+    out.push({ kind: 'Thao tác', ico: U.currentTheme() === 'dark' ? 'sun' : 'moon', label: U.currentTheme() === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối', run: () => { U.toggleTheme(); render(); } });
+    if (S.actor.role !== 'leader') {
+      for (const a of U.projected()) out.push({ kind: 'Bài viết', ico: 'file', label: a.title, sub: `${a.code}${a.authorName && S.actor.role === 'secretary' ? ', ' + a.authorName : ''}`, hay: `${a.title} ${a.code} ${a.authorName || ''}`, run: () => showDetail(a.id) });
+    }
+    return out.filter(x => !q || fold(x.hay || x.label).includes(q)).slice(0, 12);
+  }
+
+  function renderPalette(query = '') {
+    paletteRows = paletteItems(query);
+    paletteIndex = Math.min(paletteIndex, Math.max(0, paletteRows.length - 1));
+    const list = $('#palette-list');
+    list.innerHTML = paletteRows.length
+      ? paletteRows.map((r, i) => `<li role="option" id="pal-${i}" data-i="${i}" aria-selected="${i === paletteIndex}">${icon(r.ico)}<span class="pal-main"><strong>${esc(r.label)}</strong>${r.sub ? `<small>${esc(r.sub)}</small>` : ''}</span><span class="pal-kind">${esc(r.kind)}</span></li>`).join('')
+      : '<li class="pal-empty">Không tìm thấy kết quả phù hợp</li>';
+    $('#palette-input').setAttribute('aria-activedescendant', paletteRows.length ? `pal-${paletteIndex}` : '');
+    $(`#pal-${paletteIndex}`)?.scrollIntoView({ block: 'nearest' });
+  }
+
+  function openPalette() {
+    closeMenu();
+    paletteIndex = 0;
+    openDialog({
+      title: 'Tìm nhanh', variant: 'palette',
+      body: `<div class="palette"><div class="pal-input">${icon('search')}<input id="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-label="Tìm trang, bài viết hoặc thao tác" placeholder="Tìm trang, bài viết hoặc thao tác" autocomplete="off"><kbd>Esc</kbd></div><ul id="palette-list" role="listbox"></ul></div>`
+    });
+    renderPalette();
+    $('#palette-input').focus();
+  }
+
+  function runPalette(i) {
+    const row = paletteRows[i];
+    if (!row) return;
+    closeDialog();
+    row.run();
+  }
+
+  /* ---------- Menu nổi ---------- */
+
+  let menuTrigger = null;
+
+  function closeMenu() {
+    const m = $('#menu');
+    if (m.hidden) return;
+    m.hidden = true;
+    menuTrigger?.setAttribute('aria-expanded', 'false');
+    menuTrigger = null;
+  }
+
+  function openMenu(trigger, html, placement) {
+    const m = $('#menu');
+    if (!m.hidden && menuTrigger === trigger) { closeMenu(); return; }
+    closeMenu();
+    menuTrigger = trigger;
+    trigger.setAttribute('aria-expanded', 'true');
+    m.innerHTML = html;
+    m.hidden = false;
+    m.style.cssText = '';
+    const r = trigger.getBoundingClientRect();
+    const width = Math.min(340, window.innerWidth - 16);
+    m.style.width = width + 'px';
+    if (placement === 'up') {
+      m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8)) + 'px';
+      m.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+      m.style.maxHeight = Math.max(160, r.top - 16) + 'px';
+    } else {
+      m.style.top = (r.bottom + 8) + 'px';
+      m.style.left = Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)) + 'px';
+      m.style.maxHeight = Math.max(160, window.innerHeight - r.bottom - 16) + 'px';
+    }
+    m.querySelector('button')?.focus();
+  }
+
+  function roleMenu(trigger) {
+    const people = S.state.people;
+    const item = (key, name, sub, av) => `<button type="button" role="menuitemradio" aria-checked="${S.actorKey === key}" class="menu-item${S.actorKey === key ? ' active' : ''}" data-action="role" data-id="${esc(key)}">${avatar(av)}<span><strong>${esc(name)}</strong><small>${esc(sub)}</small></span>${S.actorKey === key ? icon('tick') : ''}</button>`;
+    const group = (label, items) => `<div class="menu-group" role="group" aria-label="${esc(label)}"><p>${esc(label)}</p>${items}</div>`;
+    const html = `<div class="menu-head"><strong>Đổi vai trò</strong><p>Mỗi vai trò có màn hình và quyền riêng.</p></div>
+      ${group('Biên tập', item('secretary', 'Thư ký biên tập', 'Xử lý toàn bộ quy trình', 'TK'))}
+      ${group('Người nộp bài', people.filter(p => p.role === 'author').map(p => item(p.id, p.name, p.agency, p.name)).join(''))}
+      ${group('Người phản biện', people.filter(p => p.role === 'reviewer').map(p => item(p.id, p.name, p.specialty, p.name)).join(''))}
+      ${group('Chỉ xem số liệu', item('chief', 'Trưởng Ban biên tập', 'Theo dõi tiến độ', 'TB') + item('deputy', 'Phó Ban biên tập', 'Theo dõi tiến độ', 'PB'))}`;
+    openMenu(trigger, `<div class="menu-inner" role="menu" aria-label="Đổi vai trò">${html}</div>`, trigger.id === 'role-btn' ? 'up' : 'down');
+  }
+
+  function bellMenu(trigger) {
+    const list = tasks();
+    const rows = list.slice(0, 6).map(t => `<button type="button" class="menu-item note-item" data-tone="${t.tone}" data-action="detail" data-id="${esc(t.id)}"><span class="task-ico">${icon(t.ico)}</span><span><strong>${esc(t.title)}</strong><small>${esc(t.note)}</small></span></button>`).join('');
+    const html = `<div class="menu-head"><strong>Việc cần xử lý</strong><p>${list.length ? `${list.length} việc trong vai trò hiện tại` : 'Không có việc tồn đọng'}</p></div>${rows || ''}${list.length ? `<div class="menu-foot">${button('Mở tổng quan', 'nav-overview', '', 'link')}</div>` : ''}`;
+    openMenu(trigger, `<div class="menu-inner" role="dialog" aria-label="Việc cần xử lý">${html}</div>`, 'down');
+  }
+
+  /* ---------- Tệp đính kèm ---------- */
+
+  function openDatabase() {
+    if (!fileDatabase) {
+      fileDatabase = new Promise((resolve, reject) => {
+        const request = indexedDB.open('tayninh-bantin-files-v2', 1);
+        request.onupgradeneeded = () => request.result.createObjectStore('files');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(new Error('Không mở được nơi lưu tệp trên trình duyệt.'));
+      });
+    }
+    return fileDatabase;
+  }
+
+  async function fileStore(operation, key, value) {
+    const db = await openDatabase();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('files', operation === 'put' ? 'readwrite' : 'readonly');
+      const store = tx.objectStore('files');
+      const req = operation === 'put' ? store.put(value, key) : store.get(key);
+      let result;
+      req.onsuccess = () => { result = req.result; };
+      tx.oncomplete = () => resolve(result);
+      tx.onerror = () => reject(new Error('Chưa lưu được tệp. Kiểm tra dung lượng trình duyệt.'));
+      tx.onabort = () => reject(new Error('Thao tác lưu tệp bị gián đoạn.'));
+    });
+  }
+
+  async function collectFile(form) {
+    const f = form.elements.attachment.files[0];
+    if (!f) return { auto: true, ext: 'docx', size: 0 };
+    const ext = f.name.split('.').at(-1).toLowerCase();
+    if (!['doc', 'docx', 'pdf'].includes(ext) || f.size > 10 * 1024 * 1024 || f.size === 0) throw new Error('Chọn tệp DOC, DOCX hoặc PDF có nội dung, tối đa 10 MB.');
+    const key = crypto.randomUUID();
+    await fileStore('put', key, f);
+    return { key, name: f.name, ext, size: f.size, auto: false };
+  }
+
+  function saveDownload(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  const SCHOOL = 'Trường Chính trị tỉnh Tây Ninh';
+
+  /* Dựng tài liệu Word từ dữ liệu bài viết (chỉ dùng phần mà vai trò hiện tại được xem) */
+  function wordDocument(view, kind, version) {
+    if (kind === 'anonymous') {
+      const an = view.anonymous;
+      const body = an.body;
+      return {
+        category: view.category, title: an.title, created: view.created,
+        ...(body ? { abstract: an.text, keywords: body.keywords, blocks: body.blocks, refs: body.refs } : { blocks: WordFile.fromText(an.text) })
+      };
+    }
+    const v = view.versions.find(x => x.number === Number(version));
+    const body = v.body;
+    return {
+      category: view.category, title: view.title, created: v.created,
+      author: view.authorName,
+      agency: view.agency ? (/Trường/.test(view.agency) ? view.agency : `${view.agency}, ${SCHOOL}`) : SCHOOL,
+      ...(body ? { abstract: v.text, keywords: body.keywords, blocks: body.blocks, refs: body.refs } : { blocks: WordFile.fromText(v.text) })
+    };
+  }
+
+  async function downloadFile(id, kind, version) {
+    const a = S.state.articles.find(x => x.id === id);
+    const view = a && B.projectArticle(a, S.actor);
+    if (!view) throw new Error('Tệp không thuộc phạm vi vai trò hiện tại.');
+    let file;
+    if (kind === 'anonymous' && ['reviewer', 'secretary'].includes(S.actor.role) && view.anonymous && view.anonymous.version === Number(version)) {
+      file = view.anonymous.file;
+    } else if (kind === 'original' && ['secretary', 'author'].includes(S.actor.role)) {
+      file = view.versions.find(x => x.number === Number(version))?.file;
+    }
+    if (!file) throw new Error('Tệp không thuộc phân công hoặc phiên bản được phép xem.');
+    const blob = file.auto || file.sample ? WordFile.blob(wordDocument(view, kind, version)) : await fileStore('get', file.key);
+    if (!blob) throw new Error('Tệp không còn trên trình duyệt này.');
+    saveDownload(blob, file.name);
+  }
+
+  function exportCSV() {
+    const list = U.scoped();
+    const rows = [['Trạng thái', 'Số bài'], ...Object.entries(B.statuses).map(([s, label]) => [label, list.filter(a => a.status === s).length])];
+    if (S.actor.role === 'secretary') {
+      rows.push([], ['Mã hồ sơ', 'Tên bài', 'Người nộp', 'Chuyên mục', 'Phiên bản', 'Trạng thái'], ...list.map(a => [a.code, a.title, a.authorName, a.category, a.version, B.statuses[a.status]]));
+    }
+    const safe = v => {
+      let s = String(v ?? '');
+      if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+    saveDownload(new Blob(['\ufeff' + rows.map(r => r.map(safe).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' }), `bao-cao-ban-tin-${B.date()}.csv`);
+    toast('Đã tải báo cáo theo phạm vi vai trò hiện tại.');
+  }
+
+  /* ---------- Gửi biểu mẫu ---------- */
+
+  const DONE = {
+    submit: 'Đã tiếp nhận bài viết.',
+    screen: 'Đã lưu kết quả sơ duyệt.',
+    assign: 'Đã giao bản ẩn danh cho người phản biện.',
+    review: 'Đã gửi kết quả về thư ký.',
+    return: 'Đã gửi yêu cầu chỉnh sửa cho người nộp.',
+    resubmit: 'Đã nộp phiên bản mới, chờ sơ duyệt lại.',
+    approve: 'Đã xác nhận đạt phản biện.',
+    publish: 'Đã ghi nhận đăng bài vào số bản tin.',
+    extend: 'Đã lưu hạn phản biện mới.',
+    issue_save: 'Đã lưu số bản tin.',
+    issue_publish: 'Đã phát hành số bản tin.',
+    reviewer_add: 'Đã thêm người phản biện.'
+  };
+
+  async function handleForm(event) {
+    const f = event.target;
+    if (!f.matches('form[data-form]')) return;
+    event.preventDefault();
+    const submit = f.querySelector('button[type=submit]');
+    const error = f.querySelector('.form-error');
+    submit.disabled = true;
+    error.classList.remove('visible');
+    try {
+      const data = new FormData(f);
+      const type = f.dataset.form;
+      const p = { id: f.dataset.id };
+      for (const name of ['title', 'text', 'category', 'agency', 'decision', 'note', 'result', 'comment', 'issueId', 'number', 'date', 'specialty', 'name', 'reviewerId', 'due']) {
+        if (data.has(name)) p[name] = data.get(name);
+      }
+      p.checked = data.has('checked');
+      if (['submit', 'assign', 'resubmit'].includes(type)) p.file = await collectFile(f);
+      if (type === 'assign') {
+        p.reviewerIds = data.getAll('reviewerIds');
+        p.dueMap = Object.fromEntries(p.reviewerIds.map(id => [id, data.get('due-' + id)]));
+      }
+      if (type === 'review') p.criteria = Object.fromEntries(Object.keys(B.criteria).map(k => [k, data.get('crit-' + k)]));
+      if (type === 'issue_save') {
+        p.issueId = f.dataset.id || null;
+        p.articleIds = $$('input[name=articleIds]', f).filter(el => el.checked).map(el => el.value);
+      }
+      if (type === 'issue_publish') p.issueId = f.dataset.id;
+
+      if (type === 'reset' || type === 'import_confirm') {
+        const next = type === 'reset' ? B.seed() : pendingImport?.state;
+        if (!next) throw new Error('Chưa có dữ liệu để nhập.');
+        try { localStorage.setItem(KEYS.backup, JSON.stringify(S.state)); } catch { throw new Error('Chưa lưu được bản để hoàn tác.'); }
+        U.commit(next);
+        pendingImport = null;
+        if (!S.state.people.some(x => x.id === S.actorKey) && !['secretary', 'chief', 'deputy'].includes(S.actorKey)) U.setActor('secretary');
+        else S.actor = B.actorInfo(S.state, S.actorKey);
+        closeDialog();
+        render();
+        toast(type === 'reset' ? 'Đã khôi phục dữ liệu ban đầu. Có thể hoàn tác ở trang Hướng dẫn.' : 'Đã nhập dữ liệu. Có thể hoàn tác ở trang Hướng dẫn.');
+        return;
+      }
+
+      U.commit(B.apply(S.state, S.actor, type, p));
+      S.actor = B.actorInfo(S.state, S.actorKey);
+      closeDialog();
+      render();
+      toast(DONE[type] || 'Đã lưu thao tác.', 'ok');
+    } catch (e) {
+      error.textContent = e.message;
+      error.classList.add('visible');
+      submit.disabled = false;
+      const scroller = f.querySelector('.dlg-body');
+      if (scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    }
+  }
+
+  /* ---------- Điều khiển sự kiện ---------- */
+
+  function refreshArticles() {
+    const body = $('#articles-body');
+    if (!body) return;
+    body.className = S.view === 'board' && S.actor.role === 'secretary' ? 'is-board' : '';
+    body.innerHTML = V.articleList();
+    $('#chips').innerHTML = V.statusChips();
+  }
+
+  const openers = {
+    detail: id => showDetail(id), submit: showSubmit, screen: showScreen, assign: showAssign, review: showReview,
+    return: showReturn, resubmit: showResubmit, approve: showApprove, publish: showPublish,
+    'issue-edit': id => showIssue(id), 'issue-publish': showIssuePublish, 'issue-print': showIssuePrint
+  };
+
+  async function onAction(target) {
+    const action = target.dataset.action;
+    const id = target.dataset.id;
+    if (action.startsWith('nav-')) return navigate(action.slice(4));
+    if (openers[action]) return openers[action](id);
+    switch (action) {
+      case 'cancel': {
+        const back = dialogReturn;
+        closeDialog();
+        if (back) showDetail(back);
+        return;
+      }
+      case 'stage': S.filter = id; S.search = ''; return navigate('articles');
+      case 'chip': S.filter = id; refreshArticles(); return;
+      case 'view': S.view = id; U.remember(KEYS.view, id); refreshArticles(); $$('.segmented button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.id === id))); return;
+      case 'tab': return selectTab(target);
+      case 'role': {
+        closeMenu();
+        U.setActor(id);
+        S.search = ''; S.filter = ''; S.page = 'overview';
+        closeDialog();
+        render();
+        window.scrollTo({ top: 0, behavior: 'instant' });
+        toast(`Đang xem với vai trò: ${S.actor.name}`);
+        return;
+      }
+      case 'remind': return showRemind(id, target.dataset.reviewer);
+      case 'extend': return showExtend(id, target.dataset.reviewer);
+      case 'reviewer-add': return showReviewerAdd();
+      case 'reset': return showReset();
+      case 'download-file': return downloadFile(id, target.dataset.kind, target.dataset.version);
+      case 'csv': return exportCSV();
+      case 'print': return window.print();
+      case 'copy-remind': {
+        const ok = await U.copyText($('#remind-text').value);
+        toast(ok ? 'Đã sao chép nội dung nhắc.' : 'Không sao chép được. Hãy chọn và sao chép thủ công.', ok ? 'ok' : 'error');
+        return;
+      }
+      case 'issue-up':
+      case 'issue-down': {
+        const row = target.closest('.issue-pick');
+        const parent = row.parentElement;
+        if (action === 'issue-up' && row.previousElementSibling) parent.insertBefore(row, row.previousElementSibling);
+        if (action === 'issue-down' && row.nextElementSibling) parent.insertBefore(row.nextElementSibling, row);
+        target.focus();
+        return;
+      }
+      case 'backup': {
+        if (S.actor.role !== 'secretary') return;
+        saveDownload(new Blob([JSON.stringify(S.state, null, 2)], { type: 'application/json' }), `du-lieu-ban-tin-${B.date()}.json`);
+        toast('Đã xuất dữ liệu hồ sơ, không gồm tệp đính kèm.');
+        return;
+      }
+      case 'import': return $('#import-input').click();
+      case 'undo-reset': {
+        if (S.actor.role !== 'secretary') return;
+        let previous = null;
+        try { previous = JSON.parse(localStorage.getItem(KEYS.backup) || 'null'); } catch { previous = null; }
+        if (!B.isValidState(previous)) throw new Error('Chưa có lần khôi phục hoặc nhập dữ liệu để hoàn tác.');
+        const current = S.state;
+        U.commit(previous);
+        localStorage.setItem(KEYS.backup, JSON.stringify(current));
+        render();
+        toast('Đã hoàn tác.');
+        return;
+      }
+      default:
+    }
+  }
+
+  function selectTab(tab) {
+    const list = tab.closest('[role=tablist]');
+    $$('[role=tab]', list).forEach(t => {
+      const on = t === tab;
+      t.setAttribute('aria-selected', String(on));
+      t.tabIndex = on ? 0 : -1;
+      const pane = document.getElementById(t.getAttribute('aria-controls'));
+      if (pane) pane.hidden = !on;
+    });
+  }
+
+  document.addEventListener('submit', handleForm);
+
+  document.addEventListener('click', async event => {
+    const t = event.target;
+    const menu = $('#menu');
+    if (!menu.hidden && !menu.contains(t) && !t.closest('#role-btn, #role-btn-top, #bell')) closeMenu();
+    const el = t.closest('[data-page],[data-action]');
+    if (!el) return;
+    if (el.dataset.page) { navigate(el.dataset.page); return; }
+    if (menu.contains(el)) closeMenu();
+    try { await onAction(el); }
+    catch (e) { toast(e.message, 'error'); }
+  });
+
+  $('#role-btn').addEventListener('click', e => roleMenu(e.currentTarget));
+  $('#role-btn-top').addEventListener('click', e => roleMenu(e.currentTarget));
+  $('#bell').addEventListener('click', e => bellMenu(e.currentTarget));
+  $('#open-palette').addEventListener('click', openPalette);
+  $('#theme-btn').addEventListener('click', () => { U.toggleTheme(); renderShell(); });
+  $('#close-dialog').addEventListener('click', closeDialog);
+  $('.brand').addEventListener('click', e => { e.preventDefault(); navigate('overview'); });
+
+  dlg().addEventListener('click', e => { if (e.target === dlg()) closeDialog(); });
+  dlg().addEventListener('close', () => {
+    if (dlg().open) return;
+    delete dlg().dataset.detailId;
+    if (lastFocused?.isConnected) lastFocused.focus();
+  });
+
+  document.addEventListener('input', e => {
+    const t = e.target;
+    if (t.id === 'article-search') { S.search = t.value; refreshArticles(); }
+    else if (t.id === 'palette-input') { paletteIndex = 0; renderPalette(t.value); }
+    else if (t.matches('[data-counter]')) { const c = t.nextElementSibling; if (c?.classList.contains('counter')) c.textContent = `${t.value.length} / ${t.maxLength}`; }
+  });
+
+  document.addEventListener('change', e => {
+    const t = e.target;
+    if (t.id === 'article-sort') { S.sort = t.value; refreshArticles(); }
+    else if (t.type === 'file' && t.name === 'attachment') {
+      const zone = t.closest('.dropzone');
+      const name = $('.dz-name', zone);
+      const file = t.files[0];
+      name.hidden = !file;
+      name.textContent = file ? `${file.name} (${(file.size / 1048576).toFixed(2)} MB)` : '';
+      zone.classList.toggle('has-file', !!file);
+    }
+  });
+
+  document.addEventListener('dragover', e => { const z = e.target.closest?.('.dropzone'); if (z) { e.preventDefault(); z.classList.add('over'); } });
+  document.addEventListener('dragleave', e => e.target.closest?.('.dropzone')?.classList.remove('over'));
+  document.addEventListener('drop', e => {
+    const z = e.target.closest?.('.dropzone');
+    if (!z) return;
+    e.preventDefault();
+    z.classList.remove('over');
+    const inputEl = $('input[type=file]', z);
+    if (e.dataTransfer.files.length) { inputEl.files = e.dataTransfer.files; inputEl.dispatchEvent(new Event('change', { bubbles: true })); }
+  });
+
+  document.addEventListener('keydown', e => {
+    const t = e.target;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); return; }
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !t.closest('input, textarea, select, [contenteditable]') && !dlg().open) {
+      e.preventDefault();
+      const box = $('#article-search');
+      if (box) box.focus(); else openPalette();
+      return;
+    }
+    if (e.key === 'Escape' && !$('#menu').hidden) { const trigger = menuTrigger; closeMenu(); trigger?.focus(); return; }
+    if (t.id === 'palette-input') {
+      if (e.key === 'ArrowDown') { e.preventDefault(); paletteIndex = Math.min(paletteRows.length - 1, paletteIndex + 1); renderPalette(t.value); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); paletteIndex = Math.max(0, paletteIndex - 1); renderPalette(t.value); }
+      else if (e.key === 'Enter') { e.preventDefault(); runPalette(paletteIndex); }
+    }
+    if (t.matches?.('[role=tab]') && ['ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      const tabs = $$('[role=tab]', t.closest('[role=tablist]'));
+      const next = tabs[(tabs.indexOf(t) + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+      selectTab(next);
+      next.focus();
+    }
+    const menuItems = t.closest?.('#menu') ? $$('#menu .menu-item') : [];
+    if (menuItems.length && ['ArrowDown', 'ArrowUp'].includes(e.key)) {
+      e.preventDefault();
+      const i = menuItems.indexOf(t);
+      menuItems[(i + (e.key === 'ArrowDown' ? 1 : -1) + menuItems.length) % menuItems.length].focus();
+    }
+  });
+
+  document.addEventListener('click', e => {
+    const row = e.target.closest('#palette-list li[data-i]');
+    if (row) runPalette(Number(row.dataset.i));
+  });
+
+  $('#import-input').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file || S.actor.role !== 'secretary') return;
+    try {
+      if (file.size > 5 * 1024 * 1024) throw new Error('Tệp quá lớn để nhập. Chỉ nhận tệp dữ liệu xuất từ ứng dụng.');
+      const state = JSON.parse(await file.text());
+      if (!B.isValidState(state)) throw new Error('Tệp không đúng định dạng dữ liệu của ứng dụng.');
+      pendingImport = { state, name: file.name };
+      showImportConfirm({ name: file.name, articles: state.articles.length, issues: state.issues.length });
+    } catch (err) {
+      toast(err instanceof SyntaxError ? 'Tệp không phải dữ liệu hợp lệ.' : err.message, 'error');
+    }
+  });
+
+  window.addEventListener('storage', e => {
+    if (e.key !== KEYS.state || !e.newValue) return;
+    try {
+      const updated = JSON.parse(e.newValue);
+      if (!B.isValidState(updated)) return;
+      S.state = updated;
+      try { S.actor = B.actorInfo(S.state, S.actorKey); } catch { U.setActor('secretary'); }
+      closeDialog();
+      render();
+      toast('Dữ liệu vừa được cập nhật từ một thẻ khác của trình duyệt.');
+    } catch { /* bỏ qua */ }
+  });
+
+  /* ---------- Khởi động ---------- */
+
+  U.initSession();
+  render();
+
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+
+  U.render = render;
 })();
