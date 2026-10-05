@@ -4,6 +4,8 @@
 
 Quy trình: người nộp gửi bài, thư ký sơ duyệt rồi giao cho một hoặc nhiều người phản biện (bản ẩn danh, hạn riêng cho từng người), tổng hợp ý kiến, xác nhận đạt và xếp bài vào số bản tin. Bài chưa đạt được trả về tác giả để chỉnh sửa và phân công lại.
 
+Thư ký quản lý danh sách người nộp và người phản biện, chỉnh sửa họ tên, đơn vị, chuyên môn và thông tin liên hệ. Người mới chọn “Thêm người nộp mới”, điền thông tin rồi nộp bài; người nộp có thể cập nhật hồ sơ cá nhân.
+
 Các vai trò: thư ký biên tập, người nộp bài, người phản biện, Trưởng và Phó Ban biên tập (chỉ xem số liệu).
 
 ## Chạy

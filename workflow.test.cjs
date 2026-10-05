@@ -227,3 +227,82 @@ test('phân công tạo bản ẩn danh kèm nội dung của phiên bản hiệ
   assert.ok(an.body.blocks.length > 5);
   assert.deepEqual(an.body.refs, item(s, 'article8').versions[0].body.refs);
 });
+
+const newAuthor = { personId: 'author-new', name: 'Nguyễn Minh Hòa', agency: 'Đơn vị thử nghiệm', email: 'hoa@example.com', phone: '0901234567' };
+
+test('người mới đăng ký, nộp bài, sửa bài và hoàn tất phản biện bằng hồ sơ mới', () => {
+  let s = B.registerAuthor(B.seed(), newAuthor);
+  assert.equal(s.people.at(-1).role, 'author');
+  assert.equal(s.people.at(-1).email, newAuthor.email);
+  s = B.apply(s, actor(s, newAuthor.personId), 'submit', { articleId: 'new-author-paper', title: 'Đổi mới phương pháp giảng dạy lý luận chính trị', text: 'Bài viết phân tích yêu cầu đổi mới phương pháp giảng dạy lý luận chính trị và đề xuất các giải pháp phù hợp thực tiễn.', file: sample });
+  const id = 'new-author-paper';
+  assert.equal(item(s, id).authorName, newAuthor.name);
+  assert.equal(item(s, id).agency, newAuthor.agency);
+  assert.deepEqual(B.visibleArticles(s, actor(s, newAuthor.personId)).map(a => a.id), [id]);
+  s = B.apply(s, secretary(s), 'screen', { id, decision: 'return', note: 'Cần bổ sung các dẫn chứng thực tế vào bản thảo.' });
+  s = B.apply(s, actor(s, newAuthor.personId), 'resubmit', { id, text: 'Bản chỉnh sửa đã bổ sung các dẫn chứng thực tế và hoàn thiện nhóm giải pháp theo ý kiến sơ duyệt của thư ký.', file: sample });
+  s = B.apply(s, secretary(s), 'screen', { id, decision: 'pass' });
+  s = B.apply(s, secretary(s), 'assign', assignPayload(item(s, id), ['reviewer1']));
+  const anon = B.projectArticle(item(s, id), actor(s, 'reviewer1'));
+  assert.equal(JSON.stringify(anon).includes(newAuthor.email), false);
+  assert.equal(JSON.stringify(anon).includes(newAuthor.name), false);
+  s = B.apply(s, actor(s, 'reviewer1'), 'review', { id, result: 'pass', comment: 'Nội dung bản sửa đáp ứng yêu cầu của bản tin.' });
+  s = B.apply(s, secretary(s), 'approve', { id });
+  assert.equal(item(s, id).status, 'approved');
+  assert.equal(B.isValidState(JSON.parse(JSON.stringify(s))), true);
+});
+
+test('thư ký sửa người phản biện mà giữ nguyên phân công, kết quả và hạn', () => {
+  const s = B.seed(), before = structuredClone(s);
+  const next = B.apply(s, secretary(s), 'reviewer_update', { personId: 'reviewer1', name: 'TS. Nguyễn Minh Quân', agency: 'Khoa Lý luận', specialty: 'Triết học', email: 'quan@example.com', phone: '0912345678' });
+  assert.deepEqual(s, before);
+  assert.deepEqual(next.articles, s.articles);
+  assert.equal(next.people.find(p => p.id === 'reviewer1').name, 'TS. Nguyễn Minh Quân');
+  assert.equal(actor(next, 'reviewer1').email, 'quan@example.com');
+  assert.equal(B.metrics(next).reviews.assigned, B.metrics(s).reviews.assigned);
+  assert.equal(B.metrics(next).workload.find(p => p.id === 'reviewer1').name, 'TS. Nguyễn Minh Quân');
+  for (const key of ['author1', 'reviewer1', 'chief', 'deputy']) assert.throws(() => B.apply(s, actor(s, key), 'reviewer_update', { personId: 'reviewer1', name: 'Tên không được phép' }), /Vai trò/);
+  assert.throws(() => B.apply(s, secretary(s), 'reviewer_update', { personId: 'author1', name: 'Tên không được phép' }), /Không tìm thấy/);
+});
+
+test('thư ký thêm và sửa người nộp; người nộp chỉ cập nhật hồ sơ của mình', () => {
+  let s = B.apply(B.seed(), secretary(B.seed()), 'author_add', newAuthor);
+  s = B.apply(s, actor(s, newAuthor.personId), 'submit', { articleId: 'profile-paper', title: 'Bài viết về nâng cao chất lượng đào tạo', text: 'Nội dung bài viết trao đổi về nâng cao chất lượng đào tạo, bồi dưỡng và các giải pháp tổ chức triển khai tại cơ sở.', file: sample });
+  s = B.apply(s, actor(s, newAuthor.personId), 'author_update', { ...newAuthor, name: 'Nguyễn Minh Hòa An', agency: 'Khoa Đào tạo' });
+  assert.equal(item(s, 'profile-paper').authorName, 'Nguyễn Minh Hòa An');
+  assert.equal(item(s, 'profile-paper').agency, 'Khoa Đào tạo');
+  assert.equal(item(s, 'profile-paper').authorId, newAuthor.personId);
+  assert.equal(item(s, 'profile-paper').versions.length, 1);
+  assert.throws(() => B.apply(s, actor(s, 'author1'), 'author_update', newAuthor), /Vai trò/);
+  assert.throws(() => B.apply(s, actor(s, 'chief'), 'author_add', { ...newAuthor, personId: 'another-author' }), /Vai trò/);
+  const next = B.apply(s, secretary(s), 'author_update', { ...newAuthor, name: 'Nguyễn Minh Hòa Bình' });
+  assert.equal(item(next, 'profile-paper').authorName, 'Nguyễn Minh Hòa Bình');
+});
+
+test('kiểm tra thông tin liên hệ, bắt buộc đơn vị và ít nhất một kênh liên hệ cho người mới', () => {
+  const s = B.seed();
+  for (const change of [{ name: '' }, { agency: '' }, { email: '', phone: '' }, { email: 'email-sai' }, { phone: 'số điện thoại' }, { phone: '123' }]) assert.throws(() => B.registerAuthor(s, { ...newAuthor, ...change }));
+  assert.equal(B.registerAuthor(s, { ...newAuthor, email: '', phone: '+84 901 234 567' }).people.at(-1).phone, '+84 901 234 567');
+  assert.equal(B.registerAuthor(s, { ...newAuthor, email: 'hoa@example.com', phone: '' }).people.at(-1).email, 'hoa@example.com');
+});
+
+test('không trùng hồ sơ; tên giống nhau ở đơn vị khác vẫn có thể đăng ký', () => {
+  const s = B.registerAuthor(B.seed(), newAuthor);
+  assert.throws(() => B.registerAuthor(s, { ...newAuthor, personId: 'new-id', name: 'Tên Khác' }), /đã có/);
+  assert.throws(() => B.registerAuthor(s, { ...newAuthor, personId: 'new-id', email: 'khac@example.com', phone: '+84 901 234 567', name: 'Tên Khác' }), /đã có/);
+  assert.throws(() => B.registerAuthor(s, { ...newAuthor, personId: 'new-id', email: 'khac@example.com', phone: '', name: '  nguyễn minh hòa  ' }), /đã có/);
+  const distinct = B.registerAuthor(s, { ...newAuthor, personId: 'new-id', agency: 'Đơn vị khác', email: 'khac@example.com', phone: '' });
+  assert.equal(distinct.people.filter(p => p.name === newAuthor.name).length, 2);
+  assert.throws(() => B.registerAuthor(s, { ...newAuthor, name: 'Tên Khác', email: 'khac@example.com', phone: '', personId: 'secretary' }), /Mã/);
+  assert.throws(() => B.registerAuthor(s, { ...newAuthor, name: 'Tên Khác', email: 'khac@example.com', phone: '', personId: 'author1' }), /Mã/);
+});
+
+test('đăng ký mới không đổi quyền hay ghi đè người đang có', () => {
+  const s = B.seed(), before = structuredClone(s);
+  const next = B.registerAuthor(s, { ...newAuthor, role: 'secretary', id: 'secretary' });
+  assert.deepEqual(s, before);
+  assert.deepEqual(next.people.slice(0, -1), s.people);
+  assert.deepEqual(next.articles, s.articles);
+  assert.equal(next.people.at(-1).role, 'author');
+  assert.throws(() => B.apply(next, { role: 'author', id: 'missing', name: 'Tên giả' }, 'submit', { title: 'Bài viết đủ độ dài để gửi', text: 'Nội dung bài viết đủ độ dài nhưng người nộp không có trong danh sách.', file: sample }), /Không tìm thấy/);
+});

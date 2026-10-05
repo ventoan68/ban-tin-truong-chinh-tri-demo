@@ -216,6 +216,51 @@
     return Object.fromEntries(keys.map(k => [k, Number(input[k])]));
   }
 
+  function personFields(payload, role) {
+    const read = key => typeof payload[key] === 'string' ? payload[key].trim() : '';
+    const value = Object.fromEntries(['name', 'agency', 'specialty', 'email', 'phone'].map(key => [key, read(key)]));
+    if (!required(value.name, 3, 100)) fail('Nhập họ tên từ 3 đến 100 ký tự.');
+    if (role === 'author' && !required(value.agency, 2, 200)) fail('Nhập đơn vị công tác từ 2 đến 200 ký tự.');
+    if (value.agency.length > 200 || value.specialty.length > 200) fail('Đơn vị và chuyên môn tối đa 200 ký tự.');
+    if (value.email && (value.email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.email))) fail('Địa chỉ email chưa hợp lệ.');
+    if (value.phone && (!/^[+\d\s().-]+$/.test(value.phone) || !/^\d{8,15}$/.test(value.phone.replace(/\D/g, '')))) fail('Số điện thoại phải có từ 8 đến 15 chữ số.');
+    if (role === 'author' && !value.email && !value.phone) fail('Nhập email hoặc số điện thoại để liên hệ.');
+    if (role === 'reviewer' && !value.specialty) value.specialty = 'Chuyên môn khác';
+    return value;
+  }
+
+  function savePerson(state, role, payload, editing = false) {
+    const next = clone(state);
+    const fields = personFields(payload, role);
+    const existing = editing ? next.people.find(p => p.id === payload.personId && p.role === role) : null;
+    if (editing && !existing) fail('Không tìm thấy người cần cập nhật.');
+    const same = (x, y) => x.trim().normalize('NFC').toLocaleLowerCase('vi') === y.trim().normalize('NFC').toLocaleLowerCase('vi');
+    const phoneKey = phone => (phone || '').replace(/\D/g, '').replace(/^84(?=\d{9}$)/, '0');
+    const duplicate = next.people.some(p => p.role === role && p.id !== existing?.id &&
+      ((fields.email && p.email && same(p.email, fields.email)) ||
+       (fields.phone && p.phone && phoneKey(p.phone) === phoneKey(fields.phone)) ||
+       (same(p.name, fields.name) && same(p.agency || '', fields.agency))));
+    if (duplicate) fail('Thông tin này đã có trong danh sách. Kiểm tra họ tên, đơn vị, email hoặc số điện thoại.');
+    const id = existing?.id || payload.personId || `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    if (!existing && (['secretary', 'chief', 'deputy'].includes(id) || next.people.some(p => p.id === id))) fail('Mã người dùng đã tồn tại.');
+    if (existing) {
+      Object.assign(existing, fields, { updatedAt: stamp() });
+      if (role === 'author') next.articles.filter(a => a.authorId === id).forEach(a => {
+        if (a.authorName !== fields.name || a.agency !== fields.agency) {
+          a.authorName = fields.name;
+          a.agency = fields.agency;
+          a.history.push({ at: stamp(), text: 'Cập nhật thông tin người nộp bài.' });
+        }
+      });
+    } else next.people.push({ id, role, ...fields, createdAt: stamp() });
+    return next;
+  }
+
+  // Người mới chỉ tạo hồ sơ của mình; không sửa người khác hoặc đổi quyền.
+  function registerAuthor(state, payload) {
+    return savePerson(state, 'author', payload);
+  }
+
   function apply(state, actor, type, payload = {}) {
     const next = clone(state);
     const a = next.articles.find(item => item.id === payload.id);
@@ -223,6 +268,8 @@
 
     if (type === 'submit') {
       requireRole(actor, 'author');
+      const author = next.people.find(p => p.id === actor.id && p.role === 'author');
+      if (!author) fail('Không tìm thấy người nộp bài.');
       if (!required(payload.title, 10, 300) || !required(payload.text, 40, 6000)) fail('Nhập tên bài từ 10 ký tự và tóm tắt từ 40 ký tự.');
       checkFile(payload.file);
       const n = Math.max(0, ...next.articles.map(x => Number(x.code.split('-').at(-1)) || 0)) + 1;
@@ -231,7 +278,7 @@
       next.articles.unshift({
         id: payload.articleId || `article-${Date.now()}`, code, title: payload.title.trim(),
         category: categories.includes(payload.category) ? payload.category : categories[0],
-        authorId: actor.id, authorName: actor.name, agency: payload.agency?.trim() || actor.agency || 'Chưa ghi đơn vị',
+        authorId: author.id, authorName: author.name, agency: payload.agency?.trim() || author.agency || 'Chưa ghi đơn vị',
         text: payload.text.trim(), created: stamp(), version: 1, status: 'submitted', issueId: null,
         reviews: [], feedback: [], anonymous: null,
         versions: [{ number: 1, created: stamp(), text: payload.text.trim(), body: null, file }],
@@ -240,12 +287,14 @@
       return next;
     }
 
-    if (type === 'reviewer_add') {
+    if (['reviewer_add', 'reviewer_update', 'author_add', 'author_update'].includes(type)) {
+      const role = type.startsWith('reviewer') ? 'reviewer' : 'author';
+      const editing = type.endsWith('update');
+      if (role === 'author' && editing && actor.role === 'author' && payload.personId === actor.id) {
+        return savePerson(state, role, payload, true);
+      }
       requireRole(actor, 'secretary');
-      if (!required(payload.name, 3, 100)) fail('Nhập tên hiển thị người phản biện.');
-      if (next.people.some(p => p.role === 'reviewer' && p.name.toLowerCase() === payload.name.trim().toLowerCase())) fail('Tên người phản biện đã có trong danh sách.');
-      next.people.push({ id: payload.personId || `reviewer-${Date.now()}`, role: 'reviewer', name: payload.name.trim(), specialty: payload.specialty?.trim() || 'Chuyên môn khác' });
-      return next;
+      return savePerson(state, role, payload, editing);
     }
 
     if (type === 'issue_save') {
@@ -374,7 +423,7 @@
 
   return {
     statuses, results, criteria, categories,
-    seed, apply, actorInfo, visibleArticles, projectArticle, activeReviews, allPass, maySee,
+    seed, apply, registerAuthor, actorInfo, visibleArticles, projectArticle, activeReviews, allPass, maySee,
     autoFile, date, offset, dayOf, daysUntil, isValidState, metrics
   };
 });

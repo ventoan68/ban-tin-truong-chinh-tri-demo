@@ -165,7 +165,7 @@
   function secretaryOverview() {
     const list = S.state.articles;
     const queue = tasks();
-    return `${pageHead('Tổng quan', `${list.length} hồ sơ đang theo dõi, ${pendingReviews().length} lượt phản biện chưa có kết quả.`, button('Tạo số bản tin', 'issue-edit', '', 'btn', 'plus'))}
+    return `${pageHead('Tổng quan', `${list.length} hồ sơ đang theo dõi, ${pendingReviews().length} lượt phản biện chưa có kết quả.`, button('Thêm người nộp mới', 'author-register', '', 'btn btn-primary', 'plus') + button('Tạo số bản tin', 'issue-edit', '', 'btn', 'book'))}
       ${pipeline(list, true)}
       <div class="grid-main">
         ${panel('Cần xử lý', queue.length ? `${queue.length} việc, sắp theo mức độ gấp` : 'Không còn việc tồn đọng', taskList(queue, 7))}
@@ -177,7 +177,7 @@
   function authorOverview() {
     const list = projected().sort((x, y) => String(y.created).localeCompare(String(x.created)));
     const need = tasks();
-    return `${pageHead('Bài của tôi', 'Theo dõi từng bản thảo và nộp bản chỉnh sửa khi có yêu cầu.', button('Nộp bài mới', 'submit', '', 'btn btn-primary', 'plus'))}
+    return `${pageHead('Bài của tôi', 'Theo dõi từng bản thảo và nộp bản chỉnh sửa khi có yêu cầu.', button('Thông tin cá nhân', 'author-edit', S.actor.id, 'btn', 'people') + button('Nộp bài mới', 'submit', '', 'btn btn-primary', 'plus'))}
       ${need.length ? `<div class="callout" data-tone="warn">${icon('alert')}<div><strong>${need.length} bài đang chờ bản chỉnh sửa</strong><p>Đọc ý kiến của thư ký trong từng bài rồi gửi bản sửa để được sơ duyệt lại.</p></div></div>` : ''}
       ${authorCards(list)}`;
   }
@@ -232,7 +232,7 @@
       ? `<div class="segmented" role="group" aria-label="Kiểu hiển thị"><button type="button" data-action="view" data-id="list" aria-pressed="${S.view === 'list'}">${icon('list')}<span>Danh sách</span></button><button type="button" data-action="view" data-id="board" aria-pressed="${S.view === 'board'}">${icon('columns')}<span>Bảng</span></button></div>`
       : '';
     const sort = `<label class="select-wrap"><span class="sr-only">Sắp xếp</span><select id="article-sort" aria-label="Sắp xếp">${[['recent', 'Mới nhất'], ['oldest', 'Cũ nhất'], ['status', 'Theo trạng thái'], ['title', 'Theo tên bài']].map(([v, l]) => `<option value="${v}"${S.sort === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>`;
-    return `${pageHead(title, text, role === 'author' ? button('Nộp bài mới', 'submit', '', 'btn btn-primary', 'plus') : '')}
+    return `${pageHead(title, text, role === 'author' ? button('Nộp bài mới', 'submit', '', 'btn btn-primary', 'plus') : role === 'secretary' ? button('Danh sách người nộp bài', 'author-list', '', 'btn', 'people') + button('Thêm người nộp mới', 'author-register', '', 'btn btn-primary', 'plus') : '')}
       <section class="panel">
         <div class="toolbar"><div class="search">${icon('search')}<input id="article-search" type="search" aria-label="Tìm bài viết" placeholder="Tìm theo tên bài hoặc mã hồ sơ" value="${esc(S.search)}" autocomplete="off"></div>${sort}${toggle}</div>
         <div id="chips">${statusChips()}</div>
@@ -278,7 +278,7 @@
         : `${button('Xem', 'detail', a.id, 'btn btn-sm')}${active ? button('Gia hạn', 'extend', a.id, 'btn btn-sm', '', `data-reviewer="${esc(r.reviewerId)}"`) : ''}${active && d.days !== null && d.days <= 1 ? button('Nhắc hạn', 'remind', a.id, 'btn btn-sm', '', `data-reviewer="${esc(r.reviewerId)}"`) : ''}`;
       return `<tr><td class="c-title"><button type="button" class="link title" data-action="detail" data-id="${esc(a.id)}">${esc(a.title)}</button><span class="sub"><span>${esc(a.code)}</span><span>Phiên bản ${r.version}</span></span></td>${role === 'secretary' ? `<td class="c-who"><div class="who">${avatar(person(r.reviewerId)?.name)}<span>${esc(person(r.reviewerId)?.name)}<small class="sub">${esc(person(r.reviewerId)?.specialty)}</small></span></div></td>` : ''}<td class="c-due"><span>${fmt(r.due)}</span>${r.result ? '' : `<small class="due" data-tone="${d.tone}">${esc(d.text)}</small>`}</td><td class="c-status">${result}${r.criteria ? `<small class="sub">Điểm trung bình ${scoreAvg(r.criteria)}</small>` : ''}</td><td class="c-actions">${acts}</td></tr>`;
     }).join('')}</tbody></table></div>` : empty('Chưa có lượt phân công');
-    return `${pageHead('Theo dõi phản biện', role === 'reviewer' ? 'Các lượt đánh giá được phân công.' : 'Mỗi người phản biện có thời hạn và kết quả riêng.', role === 'secretary' ? button('Thêm người phản biện', 'reviewer-add', '', 'btn', 'plus') : '')}
+    return `${pageHead('Theo dõi phản biện', role === 'reviewer' ? 'Các lượt đánh giá được phân công.' : 'Mỗi người phản biện có thời hạn và kết quả riêng.', role === 'secretary' ? button('Danh sách người phản biện', 'reviewer-list', '', 'btn', 'people') + button('Thêm người phản biện', 'reviewer-add', '', 'btn btn-primary', 'plus') : '')}
       ${figures(fig)}
       ${panel('Lịch hạn', 'Các lượt đang chờ kết quả, xếp theo mức độ gấp', `<div class="panel-body">${agenda}</div>`)}
       ${panel(role === 'reviewer' ? 'Các lượt được phân công' : 'Danh sách phân công', '', table)}`;
@@ -339,7 +339,7 @@
   function permissionTable() {
     const rows = [
       ['Người nộp bài', 'Hồ sơ của mình, tiến độ và ý kiến tổng hợp', 'Nộp bài; gửi bản chỉnh sửa khi có yêu cầu'],
-      ['Thư ký', 'Danh tính tác giả, bản gốc và kết quả của từng người phản biện', 'Sơ duyệt, chuẩn bị bản ẩn danh, phân công, tổng hợp, biên tập và đăng'],
+      ['Thư ký', 'Danh tính tác giả, bản gốc và kết quả của từng người phản biện', 'Quản lý người nộp và người phản biện; sơ duyệt, phân công, tổng hợp, biên tập và đăng'],
       ['Người phản biện', 'Bản ẩn danh được giao và nhận xét của chính mình', 'Đánh giá độc lập và gửi kết quả về thư ký'],
       ['Trưởng, Phó Ban biên tập', 'Số liệu, tiến độ và thống kê chung', 'Chỉ xem, không xử lý hồ sơ']
     ];
@@ -383,6 +383,8 @@
     const meta = `<dl class="meta"><div><dt>Mã hồ sơ</dt><dd>${esc(a.code)}</dd></div><div><dt>Phiên bản</dt><dd>${pad(a.version)}</dd></div><div><dt>Chuyên mục</dt><dd>${esc(a.category)}</dd></div>${!reviewer ? `<div><dt>Người nộp</dt><dd>${esc(a.authorName)}</dd></div><div><dt>Đơn vị</dt><dd>${esc(a.agency)}</dd></div><div><dt>Tiếp nhận</dt><dd>${fmt(a.created)}</dd></div>` : ''}</dl>`;
 
     const summary = `<section class="block"><h3>${reviewer ? 'Nội dung dùng cho phản biện' : 'Tóm tắt bản thảo'}</h3><p class="reading">${esc(reviewer ? (a.anonymous?.text || 'Phiên bản mới đang được chuẩn bị; chờ phân công lại.') : a.text)}</p></section>`;
+    const author = !reviewer ? person(a.authorId) : null;
+    const contact = secretary && author ? `<section class="block"><h3>Liên hệ người nộp</h3><dl class="meta"><div><dt>Email</dt><dd>${esc(author.email || 'Chưa ghi')}</dd></div><div><dt>Điện thoại</dt><dd>${esc(author.phone || 'Chưa ghi')}</dd></div></dl>${button('Sửa thông tin người nộp', 'author-edit', author.id, 'btn btn-sm')}</section>` : '';
     const files = !reviewer ? `<section class="block"><h3>Tệp bản thảo</h3>${a.versions.slice().reverse().map(v => fileCard(a, v.file, `Bản ${v.number}, ${fmt(v.created)}`, 'original', v.number)).join('')}</section>` : '';
     const anon = (reviewer || secretary) && a.anonymous ? `<section class="block"><h3>Tệp đã ẩn danh</h3>${fileCard(a, a.anonymous.file, `Bản ${a.anonymous.version}, đã xác nhận kiểm tra`, 'anonymous', a.anonymous.version)}</section>` : '';
     const feedback = !reviewer && a.feedback.length ? `<section class="block"><h3>Ý kiến đã gửi người nộp</h3>${a.feedback.slice().reverse().map(f => `<div class="feedback"><small>Phiên bản ${f.version}, ${fmt(f.at)}</small><p>${esc(f.text)}</p></div>`).join('')}</section>` : '';
@@ -395,7 +397,7 @@
     if (reviewer) {
       body = `<div class="callout" data-tone="info">${icon('shield')}<div><p>Bản thảo ẩn danh. Kết quả được gửi riêng về thư ký.</p></div></div>${summary}${anon}${reviewBlock}`;
     } else {
-      const tabs = [['content', 'Nội dung', summary + files + anon + feedback]];
+      const tabs = [['content', 'Nội dung', contact + summary + files + anon + feedback]];
       if (secretary) tabs.push(['reviews', `Phản biện${a.reviews.length ? ` (${a.reviews.length})` : ''}`, reviewBlock || `<p class="muted pad">Chưa giao cho người phản biện nào.</p>`]);
       tabs.push(['history', 'Lịch sử', timeline]);
       body = `${stepper(a.status)}${meta}<div class="tabs" role="tablist">${tabs.map(([k, label], i) => `<button type="button" role="tab" id="tab-${k}" aria-controls="pane-${k}" aria-selected="${i === 0}" tabindex="${i === 0 ? 0 : -1}" data-action="tab" data-id="${k}">${esc(label)}</button>`).join('')}</div>${tabs.map(([k, , html], i) => `<div class="pane" role="tabpanel" id="pane-${k}" aria-labelledby="tab-${k}"${i ? ' hidden' : ''}>${html}</div>`).join('')}`;

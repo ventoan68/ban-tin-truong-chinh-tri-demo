@@ -92,7 +92,7 @@
   const field = (label, control, { hint = '', required = false } = {}) =>
     `<label class="field"><span class="label">${esc(label)}${required ? '<em aria-hidden="true"> *</em>' : ''}</span>${control}${hint ? `<small class="hint">${esc(hint)}</small>` : ''}</label>`;
   const input = (name, value = '', { required = true, placeholder = '', max = 300, type = 'text', extra = '' } = {}) =>
-    `<input type="${type}" name="${name}" value="${esc(value)}"${required ? ' required' : ''} maxlength="${max}" placeholder="${esc(placeholder)}" autocomplete="off" ${extra}>`;
+    `<input type="${type}" name="${name}" value="${esc(value)}"${required ? ' required' : ''} maxlength="${max}" placeholder="${esc(placeholder)}" autocomplete="${type === 'email' ? 'email' : type === 'tel' ? 'tel' : 'off'}" ${extra}>`;
   const textarea = (name, value = '', { max = 6000, rows = 5, placeholder = '' } = {}) =>
     `<textarea name="${name}" rows="${rows}" maxlength="${max}" placeholder="${esc(placeholder)}" data-counter>${esc(value)}</textarea><span class="counter">${value.length} / ${max}</span>`;
   const note = (html, tone = 'info') => `<div class="callout" data-tone="${tone}">${icon(tone === 'warn' ? 'alert' : 'info')}<div>${html}</div></div>`;
@@ -134,7 +134,7 @@
     if (S.actor.role !== 'author') return;
     formDialog({
       title: 'Nộp bài viết mới', type: 'submit', submit: 'Gửi bài',
-      body: `${field('Tên bài viết', input('title', '', { placeholder: 'Từ 10 ký tự trở lên' }), { required: true })}
+      body: `<div class="ref"><strong>${esc(S.actor.name)}</strong><span>${esc(S.actor.agency || 'Chưa ghi đơn vị')}</span><span>${esc([S.actor.email, S.actor.phone].filter(Boolean).join(' · '))}</span></div>${field('Tên bài viết', input('title', '', { placeholder: 'Từ 10 ký tự trở lên' }), { required: true })}
         <div class="form-grid">
           ${field('Chuyên mục', `<select name="category">${B.categories.map(c => `<option>${esc(c)}</option>`).join('')}</select>`, { required: true })}
           ${field('Đơn vị công tác', input('agency', S.actor.agency || '', { required: false }))}
@@ -273,11 +273,47 @@
   }
 
   function showReviewerAdd() {
-    if (S.actor.role !== 'secretary') return;
+    showPersonForm('reviewer');
+  }
+
+  function showPersonForm(role, id = '', registering = false) {
+    const editing = Boolean(id);
+    const p = editing ? person(id) : {};
+    const own = role === 'author' && editing && S.actor.role === 'author' && S.actor.id === id;
+    if (editing && (!p || p.role !== role)) return;
+    if (!registering && !own && S.actor.role !== 'secretary') return;
+    const label = role === 'reviewer' ? 'người phản biện' : 'người nộp bài';
     formDialog({
-      title: 'Thêm người phản biện', type: 'reviewer_add', submit: 'Thêm',
-      body: `${field('Tên hiển thị', input('name', '', { placeholder: 'Ví dụ: TS. Nguyễn Văn Nam' }), { required: true, hint: 'Tên này chỉ thư ký nhìn thấy.' })}${field('Chuyên môn', input('specialty', '', { required: false }))}`
+      title: own ? 'Thông tin cá nhân' : `${editing ? 'Sửa thông tin' : 'Thêm'} ${label}`,
+      type: registering ? 'author_register' : `${role}_${editing ? 'update' : 'add'}`, id,
+      submit: registering ? 'Lưu thông tin và nộp bài' : editing ? 'Lưu thay đổi' : 'Thêm vào danh sách',
+      body: `${field('Họ và tên', input('name', p.name || '', { max: 100 }), { required: true })}
+        ${field('Đơn vị công tác', input('agency', p.agency || '', { required: role === 'author', max: 200 }), { required: role === 'author' })}
+        ${role === 'reviewer' ? field('Chuyên môn', input('specialty', p.specialty || '', { required: false, max: 200 })) : ''}
+        <div class="form-grid">
+          ${field('Email', input('email', p.email || '', { required: false, type: 'email', max: 254 }))}
+          ${field('Số điện thoại', input('phone', p.phone || '', { required: false, type: 'tel', max: 30 }))}
+        </div>${role === 'author' ? '<p class="hint">Cần ít nhất một thông tin liên hệ: email hoặc số điện thoại.</p>' : ''}`
     });
+  }
+
+  function showPeople(role) {
+    if (S.actor.role !== 'secretary' || !['author', 'reviewer'].includes(role)) return;
+    const people = S.state.people.filter(p => p.role === role);
+    const cards = people.map(p => {
+      const count = role === 'author' ? S.state.articles.filter(a => a.authorId === p.id).length
+        : S.state.articles.reduce((n, a) => n + a.reviews.filter(r => r.reviewerId === p.id).length, 0);
+      const search = fold([p.name, p.agency, p.specialty, p.email, p.phone].filter(Boolean).join(' '));
+      return `<article class="person-card" data-person-search="${esc(search)}"><header>${avatar(p.name)}<div><strong>${esc(p.name)}</strong><span>${esc(p.agency || 'Chưa ghi đơn vị')}</span></div></header>
+        ${role === 'reviewer' ? `<p>${esc(p.specialty || 'Chuyên môn khác')}</p>` : ''}
+        <dl><div><dt>Email</dt><dd>${esc(p.email || 'Chưa ghi')}</dd></div><div><dt>Điện thoại</dt><dd>${esc(p.phone || 'Chưa ghi')}</dd></div></dl>
+        <footer><small>${count} ${role === 'author' ? 'bài đã nộp' : 'lượt phản biện'}</small>${button('Sửa thông tin', `${role}-edit`, p.id, 'btn btn-sm')}</footer></article>`;
+    }).join('');
+    openDialog({ title: role === 'reviewer' ? 'Danh sách người phản biện' : 'Danh sách người nộp bài',
+      body: `<div class="dlg-body"><div class="directory-tools">${button(role === 'reviewer' ? 'Thêm người phản biện' : 'Thêm người nộp bài', `${role}-add`, '', 'btn btn-primary', 'plus')}
+        <label class="field"><span class="sr-only">Tìm trong danh sách</span><input id="person-search" type="search" placeholder="Tìm tên, đơn vị hoặc liên hệ" aria-label="Tìm trong danh sách"></label></div>
+        <p class="muted" id="person-count">${people.length} người</p><div class="person-list">${cards}</div><p id="person-empty" class="muted"${people.length ? ' hidden' : ''}>Không có người phù hợp.</p></div>
+        <div class="dlg-foot">${button('Đóng', 'cancel', '', 'btn')}</div>` });
   }
 
   function showIssue(id) {
@@ -351,7 +387,10 @@
     if (S.actor.role === 'secretary') {
       out.push({ kind: 'Thao tác', ico: 'plus', label: 'Tạo số bản tin', run: () => showIssue('') });
       out.push({ kind: 'Thao tác', ico: 'plus', label: 'Thêm người phản biện', run: showReviewerAdd });
+      out.push({ kind: 'Thao tác', ico: 'people', label: 'Danh sách người phản biện', run: () => showPeople('reviewer') });
+      out.push({ kind: 'Thao tác', ico: 'people', label: 'Danh sách người nộp bài', run: () => showPeople('author') });
     }
+    out.push({ kind: 'Thao tác', ico: 'plus', label: 'Thêm người nộp mới', run: () => showPersonForm('author', '', true) });
     out.push({ kind: 'Thao tác', ico: U.currentTheme() === 'dark' ? 'sun' : 'moon', label: U.currentTheme() === 'dark' ? 'Chuyển sang giao diện sáng' : 'Chuyển sang giao diện tối', run: () => { U.toggleTheme(); render(); } });
     if (S.actor.role !== 'leader') {
       for (const a of U.projected()) out.push({ kind: 'Bài viết', ico: 'file', label: a.title, sub: `${a.code}${a.authorName && S.actor.role === 'secretary' ? ', ' + a.authorName : ''}`, hay: `${a.title} ${a.code} ${a.authorName || ''}`, run: () => showDetail(a.id) });
@@ -430,7 +469,7 @@
     const group = (label, items) => `<div class="menu-group" role="group" aria-label="${esc(label)}"><p>${esc(label)}</p>${items}</div>`;
     const html = `<div class="menu-head"><strong>Đổi vai trò</strong><p>Mỗi vai trò có màn hình và quyền riêng.</p></div>
       ${group('Biên tập', item('secretary', 'Thư ký biên tập', 'Xử lý toàn bộ quy trình', 'TK'))}
-      ${group('Người nộp bài', people.filter(p => p.role === 'author').map(p => item(p.id, p.name, p.agency, p.name)).join(''))}
+      ${group('Người nộp bài', `<button type="button" role="menuitem" class="menu-item" data-action="author-register">${icon('plus')}<span><strong>Thêm người nộp mới</strong><small>Nhập thông tin và nộp bài</small></span></button>` + people.filter(p => p.role === 'author').map(p => item(p.id, p.name, p.agency, p.name)).join(''))}
       ${group('Người phản biện', people.filter(p => p.role === 'reviewer').map(p => item(p.id, p.name, p.specialty, p.name)).join(''))}
       ${group('Chỉ xem số liệu', item('chief', 'Trưởng Ban biên tập', 'Theo dõi tiến độ', 'TB') + item('deputy', 'Phó Ban biên tập', 'Theo dõi tiến độ', 'PB'))}`;
     openMenu(trigger, `<div class="menu-inner" role="menu" aria-label="Đổi vai trò">${html}</div>`, trigger.id === 'role-btn' ? 'up' : 'down');
@@ -559,7 +598,10 @@
     extend: 'Đã lưu hạn phản biện mới.',
     issue_save: 'Đã lưu số bản tin.',
     issue_publish: 'Đã phát hành số bản tin.',
-    reviewer_add: 'Đã thêm người phản biện.'
+    reviewer_add: 'Đã thêm người phản biện.',
+    reviewer_update: 'Đã cập nhật thông tin người phản biện.',
+    author_add: 'Đã thêm người nộp bài.',
+    author_update: 'Đã cập nhật thông tin người nộp bài.'
   };
 
   async function handleForm(event) {
@@ -574,7 +616,7 @@
       const data = new FormData(f);
       const type = f.dataset.form;
       const p = { id: f.dataset.id };
-      for (const name of ['title', 'text', 'category', 'agency', 'decision', 'note', 'result', 'comment', 'issueId', 'number', 'date', 'specialty', 'name', 'reviewerId', 'due']) {
+      for (const name of ['title', 'text', 'category', 'agency', 'decision', 'note', 'result', 'comment', 'issueId', 'number', 'date', 'specialty', 'name', 'email', 'phone', 'reviewerId', 'due']) {
         if (data.has(name)) p[name] = data.get(name);
       }
       p.checked = data.has('checked');
@@ -589,6 +631,17 @@
         p.articleIds = $$('input[name=articleIds]', f).filter(el => el.checked).map(el => el.value);
       }
       if (type === 'issue_publish') p.issueId = f.dataset.id;
+      if (type.endsWith('_update')) p.personId = f.dataset.id;
+
+      if (type === 'author_register') {
+        p.personId = `author-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+        U.commit(B.registerAuthor(S.state, p));
+        U.setActor(p.personId);
+        S.search = ''; S.filter = ''; S.page = 'overview';
+        closeDialog(); render(); showSubmit();
+        toast('Đã lưu thông tin người nộp bài.', 'ok');
+        return;
+      }
 
       if (type === 'reset' || type === 'import_confirm') {
         const next = type === 'reset' ? B.seed() : pendingImport?.state;
@@ -608,6 +661,7 @@
       S.actor = B.actorInfo(S.state, S.actorKey);
       closeDialog();
       render();
+      if (S.actor.role === 'secretary' && /^(author|reviewer)_(add|update)$/.test(type)) showPeople(type.startsWith('author') ? 'author' : 'reviewer');
       toast(DONE[type] || 'Đã lưu thao tác.', 'ok');
     } catch (e) {
       error.textContent = e.message;
@@ -663,6 +717,12 @@
       case 'remind': return showRemind(id, target.dataset.reviewer);
       case 'extend': return showExtend(id, target.dataset.reviewer);
       case 'reviewer-add': return showReviewerAdd();
+      case 'reviewer-edit': return showPersonForm('reviewer', id);
+      case 'reviewer-list': return showPeople('reviewer');
+      case 'author-list': return showPeople('author');
+      case 'author-add': return showPersonForm('author');
+      case 'author-edit': return showPersonForm('author', id);
+      case 'author-register': return showPersonForm('author', '', true);
       case 'reset': return showReset();
       case 'download-file': return downloadFile(id, target.dataset.kind, target.dataset.version);
       case 'csv': return exportCSV();
@@ -747,6 +807,13 @@
   document.addEventListener('input', e => {
     const t = e.target;
     if (t.id === 'article-search') { S.search = t.value; refreshArticles(); }
+    else if (t.id === 'person-search') {
+      const q = fold(t.value);
+      let visible = 0;
+      $$('[data-person-search]', dlg()).forEach(card => { card.hidden = !card.dataset.personSearch.includes(q); if (!card.hidden) visible++; });
+      $('#person-count').textContent = `${visible} người`;
+      $('#person-empty').hidden = visible > 0;
+    }
     else if (t.id === 'palette-input') { paletteIndex = 0; renderPalette(t.value); }
     else if (t.matches('[data-counter]')) { const c = t.nextElementSibling; if (c?.classList.contains('counter')) c.textContent = `${t.value.length} / ${t.maxLength}`; }
   });
