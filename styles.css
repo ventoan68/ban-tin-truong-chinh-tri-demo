@@ -566,7 +566,7 @@ dialog[data-variant="drawer"] #dialog-title { font-family: var(--font-read); fon
 .label { display: block; margin-bottom: 6px; font-size: 13.5px; font-weight: 600; }
 .label em { color: var(--danger); font-style: normal; }
 .hint { display: block; margin-top: 5px; font-size: 12.5px; color: var(--text-3); }
-input[type="text"], input[type="date"], input[type="search"], select, textarea {
+input[type="text"], input[type="email"], input[type="tel"], input[type="date"], input[type="search"], select, textarea {
   width: 100%; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: var(--r-s); background: var(--surface); color: var(--text); font-size: 15px;
 }
 input::placeholder, textarea::placeholder { color: var(--text-3); }
@@ -839,7 +839,7 @@ dialog[data-variant="modal"] { max-height: calc(100vh - 32px); }
 }
 
 @media (max-width: 920px) {
-  input[type="text"], input[type="date"], input[type="search"], select, textarea { font-size: 16px; }
+  input[type="text"], input[type="email"], input[type="tel"], input[type="date"], input[type="search"], select, textarea { font-size: 16px; }
   .topbar { padding-top: calc(8px + env(safe-area-inset-top)); padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right)); }
   main { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
   .tabbar { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
