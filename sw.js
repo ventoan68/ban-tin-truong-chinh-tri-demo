@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'tayninh-bantin-';
-const CACHE = `${CACHE_PREFIX}20261005-2`;
+const CACHE = `${CACHE_PREFIX}20261005-3`;
 const FILES = [
   './', 'index.html', 'styles.css', 'docx.js', 'samples.js', 'workflow.js', 'ui.js', 'views.js', 'app.js',
   'icon.svg', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'manifest.webmanifest',
